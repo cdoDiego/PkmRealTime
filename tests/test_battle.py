@@ -37,6 +37,7 @@ assert cmd.split(";")[1] == "G 0x225cea5 0000000000 0000000000"          # conta
 # sueño: tipo 2 y turnos en los bits 3-8; envenenamiento grave: tipo 1 y turnos 15
 sleep = battle.set_status_command("enemy", 0, "sleep", 2).split(";")[0].split()[-1]
 assert sleep == "00000000" + "1a000000" + "00" * 12, sleep   # 2 turnos sin atacar = 3 en el contador
+assert battle.show_status_command("enemy", 0, "toxic").endswith("0006") and battle.show_status_command("enemy", 0, "poison").endswith("0005")
 toxic = battle.set_status_command("enemy", 0, "toxic").split(";")[0].split()[-1]
 assert toxic == "00" * 16 + "79000000", toxic
 for bad in [lambda: battle.set_status_command("enemy", 0, "sleep", 7), lambda: battle.set_status_command("enemy", 0, "burn", 2),

@@ -611,7 +611,10 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] Sueño (`sleep`, `turns`) y envenenamiento grave (`toxic`), con el formato de la decompilación (condición = tipo en bits 0-2 +
   turnos en bits 3-8; contadores u8 desde +0xAC). Validado contra una entrenadora (Sewaddle): sueño con ícono SLP y ojos cerrados;
   con el contador a 3 durmió 2 turnos y atacó en el tercero (por eso `turns` = turnos sin atacar y se guarda turns + 1).
-  Grave: ícono PSN (en BW es el mismo que el normal) y daño 1, 2, 3, 4 con 21 de vida máxima.
+  Grave: daño 1, 2, 3, 4 con 21 de vida máxima. El ícono del grave es PSN con letras moradas (el normal, blancas): valor 6
+  en `SET_GAUGE_STATUS` (corregido y validado con un Psyduck; antes mandábamos 5 y salía el normal).
+  Contraprueba: Oshawott con Tóxico puesto por `set_move` envenenó a un Lillipup y `/state` lo leyó como `toxic (turno 1)`:
+  el juego escribe el mismo valor que nosotros.
 - [x] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
 - [ ] Combate contra entrenador con varios Pokémon: el resto del equipo rival y los cambios de Pokémon.
 - [ ] Combate doble.

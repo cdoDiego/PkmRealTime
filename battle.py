@@ -144,8 +144,12 @@ def show_hp_command(side: str, index: int) -> str:
 
 
 def show_status_command(side: str, index: int, status: str) -> str:
-    """Comando J: pone el ícono de estado (y el color) del combatiente. Validado con parálisis."""
-    value = 0 if status == "none" else SICK_INDEX[status]
+    """Comando J: pone el ícono de estado (y el color) del combatiente.
+
+    El valor es el número del estado; el envenenamiento grave tiene su propio ícono (PSN en morado) con el 6
+    (ServerControl_SetCondition en btl_server_flow.c: CONDITION_POISON + 1).
+    """
+    value = 0 if status == "none" else 6 if status == "toxic" else SICK_INDEX[status]
     return "J " + battle_cmd.encode("SET_GAUGE_STATUS", poke_id(side, index), value).hex()
 
 
