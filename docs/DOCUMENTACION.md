@@ -499,8 +499,10 @@ Eventos disponibles:
   cuando se reproduce el turno (si se envía con el menú abierto, al empezar el turno siguiente). `"show": false` para no animarla.
   Vida 0: se debilita como en el juego (mensaje, animación, experiencia, cambio de Pokémon o derrota) en cuanto el juego lo
   revisa (tras el primer golpe en que participe o al final del turno). Detalle en "Debilitar con vida 0" (sección 2).
-- `battle_set_status` (experimental): deja solo esa condición principal (`none`, `paralysis`, `freeze`, `burn`, `poison`)
-  en las dos copias. El ícono y el color se actualizan igual que la barra (al reproducirse el turno). El sueño aún no (falta saber cómo guarda los turnos).
+- `battle_set_status` (experimental): deja solo esa condición principal (`none`, `paralysis`, `sleep`, `freeze`, `burn`,
+  `poison`, `toxic`) en las dos copias, con sus contadores a 0. El ícono y el color se actualizan igual que la barra (al reproducirse
+  el turno). `sleep` acepta `turns` (1-6, por defecto 3): turnos sin atacar; despierta y ataca en el siguiente. `toxic` = envenenamiento grave
+  (daño 1/16, 2/16, 3/16… del máximo). `/state` los muestra como `sleep (quedan n turnos)` y `toxic (turno n)`.
 - `battle_set_stage` (experimental): cambia una estadística en combate (`atk`, `def`, `spa`, `spd`, `spe`, `acc`, `eva`).
   `stage` fija el valor final (−6..+6); `delta` suma o resta niveles. En pantalla no se ve (Gen 5 no lo muestra).
 - `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
@@ -546,6 +548,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | **Opción 3 funcionando:** comandos de pantalla inyectados en la cola del cliente. `battle_set_hp` y `battle_set_status` ahora animan la barra y ponen el ícono con los gráficos del juego. Validado: barra + ícono de quemado + quemadura que lo debilita, con experiencia y subida de nivel normales. |
 | 27-oct | Pruebas en tu propio Pokémon: vida a 5, veneno y curar funcionan con su animación. **Vida 0 directa deja el combate en bucle** (el rival ataca y falla): primero se puso mínimo 1, luego se resolvió con `F` (sección 2, "Debilitar con vida 0"). El puente rechaza campos desconocidos (un `side` fuera de `target` se aplicaba al rival sin avisar). |
 | 27-oct | Causa del bucle con vida 0 encontrada en la decompilación (`CheckFainted` salta a los que ya tienen 0). BizHawk sí avisa al ejecutarse una dirección (`trace_faint.lua`: 10 llamadas en un turno). Nuevo comando `F`: el Lua pone la vida a 0 justo cuando el juego revisa a ese Pokémon. |
+| 27-oct | Pruebas visuales completas: congelado, quitar estado y evento durante las animaciones (la barra bajó a mitad de Leer). Sueño y envenenamiento grave implementados con el formato de `battle_condition.c` (pokebw2), pendientes de validar en el juego. |
+| 27-oct | Sueño y envenenamiento grave validados en el juego (combate contra entrenadora). El contador del sueño incluye el turno en que despierta: `turns` ahora significa turnos sin atacar. |
 
 ---
 
@@ -600,12 +604,15 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] `battle_set_stage`: con Ataque +2 y Defensa del rival −2, el mismo golpe (desde el mismo savestate) pasó de quitar menos de media vida a debilitarlo.
 - [x] `battle_set_pp`: PP al máximo se ve al instante en el menú de Luchar (33/35 → 35/35). Con un movimiento del rival a 0 PP no lo usó; sin PP en ninguno, usó Forcejeo.
 - [x] Barra de vida e ícono de estado actualizados con los gráficos del juego (inyección en la cola del cliente).
-- [ ] Evento enviado **durante** las animaciones de un turno: debería verse al momento.
+- [x] Evento enviado **durante** las animaciones de un turno: con Leer en marcha, la barra del rival bajó a mitad del ataque, sin esperar al turno siguiente.
 - [x] Subir la vida (curar en combate): la barra sube animada.
 - [x] Envenenado a tu Pokémon: ícono PSN, tinte morado y daño al final del turno.
-- [ ] Ícono de congelado y quitar el ícono (`none`).
-- [ ] Sueño (turnos dormido) y envenenamiento grave (contador).
-- [ ] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
+- [x] Congelado al rival: ícono y no atacó. Quitar el estado (`none`): desaparece el ícono, ataca de nuevo y no sale "se descongeló".
+- [x] Sueño (`sleep`, `turns`) y envenenamiento grave (`toxic`), con el formato de la decompilación (condición = tipo en bits 0-2 +
+  turnos en bits 3-8; contadores u8 desde +0xAC). Validado contra una entrenadora (Sewaddle): sueño con ícono SLP y ojos cerrados;
+  con el contador a 3 durmió 2 turnos y atacó en el tercero (por eso `turns` = turnos sin atacar y se guarda turns + 1).
+  Grave: ícono PSN (en BW es el mismo que el normal) y daño 1, 2, 3, 4 con 21 de vida máxima.
+- [x] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
 - [ ] Combate contra entrenador con varios Pokémon: el resto del equipo rival y los cambios de Pokémon.
 - [ ] Combate doble.
 

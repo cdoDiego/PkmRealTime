@@ -5,12 +5,14 @@ sys.path.insert(0, ROOT)   # para importar los módulos de la raíz del proyecto
 import struct
 import battle
 
-def battler(hp=10, max_hp=16, stages=(6, 6, 6, 6, 6, 6, 6), sick=None):
+def battler(hp=10, max_hp=16, stages=(6, 6, 6, 6, 6, 6, 6), sick=None, sleep=None):
     raw = bytearray(battle.OFF_MOVES + 4 * battle.MOVE_STRIDE)
     struct.pack_into("<HH", raw, battle.OFF_MAX_HP, max_hp, hp)
     raw[battle.OFF_STAGES:battle.OFF_STAGES + 7] = bytes(stages)
     if sick:
         struct.pack_into("<I", raw, battle.OFF_SICK + 4 * sick, 1)
+    if sleep:
+        struct.pack_into("<I", raw, battle.OFF_SICK + 8, 2 | (sleep[1] << 3)); raw[battle.OFF_COUNTERS + 2] = sleep[0]
     return raw.hex()
 
 # cambios de estadísticas legibles: 6 = 0, 5 = -1, 8 = +2
@@ -25,10 +27,20 @@ assert (e["hp"], e["hp_visual"], e["conditions"]) == (3, 0, ["paralysis"]), e
 # escrituras en las dos copias, con su guarda
 assert battle.set_hp_command("enemy", 0, 1) == "G 0x225ce08 0300 0100;G 0x225bf0c 0000 0100"
 # vida 0: la copia real queda a 1 y el Lua la debilita cuando el juego la revisa; la visual pasa a 0
+s = battle.parse(f"T:00,P1:0225c344:{battler(sleep=(1, 3))}:-")
+assert s["player"][0]["conditions"] == ["sleep (quedan 1 turnos)"], s
+b = battle.parse(f"T:00,e0:0225befc:{battler(hp=0)}:-,E0:0225cdf8:{battler(hp=3, sick=1)}:-")
 assert battle.set_hp_command("enemy", 0, 0) == "F 0x225cdf8;G 0x225ce08 0300 0100;G 0x225bf0c 0000 0000"
 cmd = battle.set_status_command("enemy", 0, "burn")
-assert cmd.count("G ") == 2 and cmd.split(";")[0].endswith("0000000000000000000000000100000000000000")
-for bad in [lambda: battle.set_status_command("enemy", 0, "sleep"), lambda: battle.set_hp_command("player", 3, 1)]:
+assert cmd.count("G ") == 4 and cmd.split(";")[0].endswith("0000000000000000000000000100000000000000")
+assert cmd.split(";")[1] == "G 0x225cea5 0000000000 0000000000"          # contadores 1-5 a 0 (+0xAD)
+# sueño: tipo 2 y turnos en los bits 3-8; envenenamiento grave: tipo 1 y turnos 15
+sleep = battle.set_status_command("enemy", 0, "sleep", 2).split(";")[0].split()[-1]
+assert sleep == "00000000" + "1a000000" + "00" * 12, sleep   # 2 turnos sin atacar = 3 en el contador
+toxic = battle.set_status_command("enemy", 0, "toxic").split(";")[0].split()[-1]
+assert toxic == "00" * 16 + "79000000", toxic
+for bad in [lambda: battle.set_status_command("enemy", 0, "sleep", 7), lambda: battle.set_status_command("enemy", 0, "burn", 2),
+            lambda: battle.set_status_command("enemy", 0, "confusion"), lambda: battle.set_hp_command("player", 3, 1)]:
     try:
         bad(); raise SystemExit("debía fallar")
     except ValueError:

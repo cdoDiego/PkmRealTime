@@ -2193,6 +2193,54 @@
           }
         },
         {
+          "name": "Rival: vida a 5 (lanzar durante las animaciones)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_hp\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Prueba: elige un ataque y envía esta petición mientras se ven las animaciones del turno. La barra debería bajar al momento, sin esperar al turno siguiente. Comprueba después en GET /events/{{eventId}} que quedó 'aplicado'."
+          }
+        },
+        {
           "name": "Tu Pokémon: debilitar (vida 0)",
           "event": [
             {
@@ -2382,6 +2430,102 @@
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "Rival: dormir 3 turnos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_status\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"status\": \"sleep\",\n  \"turns\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "turns = turnos sin atacar (1-6, por defecto 3); despierta y ataca en el siguiente. /state: sleep (quedan n turnos)."
+          }
+        },
+        {
+          "name": "Rival: envenenar gravemente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_status\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"status\": \"toxic\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Daño creciente: 1/16, 2/16, 3/16… de la vida máxima por turno."
           }
         },
         {

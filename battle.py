@@ -85,18 +85,44 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
     return info
 
 
-# Estado en combate (validado 27-oct con una quemadura): lista de entradas u32 desde +0x1C, una por condición,
-# índice = número del estado de Gen 5 (1 parálisis, 2 sueño, 3 congelado, 4 quemado, 5 envenenado).
-# Valor 0 = no la tiene; 1 = permanente. Onda Trueno dejó 1 en +0x20 (entrada de parálisis), y escribir 4 ahí
-# no quemó (solo cambió la "duración" de la parálisis). El sueño queda fuera hasta saber cómo guarda los turnos.
-OFF_SICK = 0x1C
-SICK_INDEX = {"paralysis": 1, "freeze": 3, "burn": 4, "poison": 5}
+# Estado en combate (validado 27-oct): 36 condiciones u32 desde +0x1C (BattleMonCore.conditions en pokebw2),
+# índice = número del estado de Gen 5 (1 parálisis, 2 sueño, 3 congelado, 4 quemado, 5 envenenado), y desde +0xAC
+# un contador u8 por condición (conditionCounters). Cada condición (src/ov167/battle_condition.c):
+#   bits 0-2 tipo (0 = no la tiene, 1 = permanente, 2 = dura unos turnos), bits 3-8 turnos.
+# Sueño: tipo 2 y los turnos; el contador sube cada vez que intenta atacar y despierta (y ataca) al llegar a esos turnos
+# (BattleMon_TickSleep). Validado 27-oct: con 3 durmió 2 turnos y atacó en el tercero, así que se guarda turns + 1.
+# Envenenamiento grave: tipo 1 y turnos 15 (MakeConditionBadlyPoisoned); daño = 1/16 × contador, que sube cada turno.
+OFF_SICK, OFF_COUNTERS = 0x1C, 0xAC
+SICK_INDEX = {"paralysis": 1, "sleep": 2, "freeze": 3, "burn": 4, "poison": 5, "toxic": 5}
 BLOCK = slice(OFF_SICK + 4, OFF_SICK + 4 * 6)        # entradas 1..5 (+0x20..+0x33)
+COUNTERS = slice(OFF_COUNTERS + 1, OFF_COUNTERS + 6)  # sus contadores (+0xAD..+0xB1)
+SLEEP_TURNS = 3                                       # turnos sin atacar por defecto; el juego elige entre 1 y 3
+TOXIC = 1 | (15 << 3)
+
+
+def condition_value(status: str, turns=None) -> int:
+    if status == "sleep":
+        turns = SLEEP_TURNS if turns is None else int(turns)
+        if not 1 <= turns <= 6:
+            raise ValueError("turns (sueño) debe ir de 1 a 6")
+        return 2 | ((turns + 1) << 3)
+    if turns is not None:
+        raise ValueError("turns solo se usa con sleep")
+    return TOXIC if status == "toxic" else 1
 
 
 def status_names(raw: bytes) -> list[str]:
     names = {1: "paralysis", 2: "sleep", 3: "freeze", 4: "burn", 5: "poison"}
-    return [n for i, n in names.items() if struct.unpack_from("<I", raw, OFF_SICK + 4 * i)[0]]
+    out = []
+    for i, n in names.items():
+        value = struct.unpack_from("<I", raw, OFF_SICK + 4 * i)[0]
+        if value & 7:
+            if i == 2:
+                n = f"sleep (quedan {max(0, ((value >> 3) & 0x3F) - 1 - raw[OFF_COUNTERS + 2])} turnos)"
+            elif i == 5 and value & 0x1FF == TOXIC:
+                n = f"toxic (turno {raw[OFF_COUNTERS + 5]})"
+            out.append(n)
+    return out
 
 
 def _both(side: str, index: int):
@@ -123,14 +149,21 @@ def show_status_command(side: str, index: int, status: str) -> str:
     return "J " + battle_cmd.encode("SET_GAUGE_STATUS", poke_id(side, index), value).hex()
 
 
-def set_status_command(side: str, index: int, status: str) -> str:
-    """Comandos G que dejan solo esa condición principal (o ninguna) en las dos copias."""
+def set_status_command(side: str, index: int, status: str, turns=None) -> str:
+    """Comandos G que dejan solo esa condición principal (o ninguna) en las dos copias, con sus contadores a 0."""
     if status != "none" and status not in SICK_INDEX:
         raise ValueError(f"estado no soportado en combate: {status} (válidos: none, {', '.join(SICK_INDEX)})")
     new = bytearray(BLOCK.stop - BLOCK.start)
     if status != "none":
-        struct.pack_into("<I", new, 4 * (SICK_INDEX[status] - 1), 1)
-    return ";".join(f"G {addr + BLOCK.start:#x} {raw[BLOCK].hex()} {new.hex()}" for addr, raw in _both(side, index))
+        struct.pack_into("<I", new, 4 * (SICK_INDEX[status] - 1), condition_value(status, turns))
+    elif turns is not None:
+        raise ValueError("turns solo se usa con sleep")
+    zero = bytes(COUNTERS.stop - COUNTERS.start)
+    cmds = []
+    for addr, raw in _both(side, index):
+        cmds.append(f"G {addr + BLOCK.start:#x} {raw[BLOCK].hex()} {new.hex()}")
+        cmds.append(f"G {addr + COUNTERS.start:#x} {raw[COUNTERS].hex()} {zero.hex()}")
+    return ";".join(cmds)
 
 
 def set_stage_command(side: str, index: int, stat: str, stage=None, delta=None) -> str:

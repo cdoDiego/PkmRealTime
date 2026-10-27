@@ -51,6 +51,7 @@ class EventIn(BaseModel):
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
     hp: Optional[int] = None
     status: Optional[str] = None
+    turns: Optional[int] = None      # battle_set_status con sleep: turnos sin atacar (1-6, por defecto 3)
     item: Optional[int] = None       # set_item: nº de objeto (0 = quitar)
     move: Optional[int] = None       # set_move: nº de movimiento
     move_slot: Optional[int] = None  # set_move: hueco 0-3
@@ -136,7 +137,7 @@ def build_commands(ev: Event) -> str:
             return "SAVE;" + battle.set_stage_command(side, slot, str(need(d, "stat")), d["stage"], d["delta"])
         if d["type"] == "battle_set_pp":
             return "SAVE;" + battle.set_pp_command(side, slot, int(need(d, "move_slot")), d["pp"])
-        cmds = "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")))
+        cmds = "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")), d.get("turns"))
         return cmds + (";" + battle.show_status_command(side, slot, d["status"]) if d.get("show", True) else "")
     if d["type"] in NEEDS_DATA and not game["data_ok"]:
         raise ValueError("gen5_data.json no es de la ROM que se está jugando: configura ROM_PATH en config_local.py "
