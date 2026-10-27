@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 import bag
 import battle
+import battle_cmd
 import config
 import gamedata
 import gift
@@ -35,14 +36,15 @@ import pk5
 
 # ---------------------------------------------------------------- modelos
 When = Literal["en_mapa", "en_combate", "cualquiera"]
-WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"}}
+WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"},
+                 "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
 BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp"}   # siempre esperan al combate, aunque no se indique "when"
 
 
 class EventIn(BaseModel):
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "rollback"]
+                  "battle_set_stage", "battle_set_pp", "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
     hp: Optional[int] = None
@@ -62,6 +64,12 @@ class EventIn(BaseModel):
     stage: Optional[int] = None      # battle_set_stage: valor final -6..+6
     delta: Optional[int] = None      # battle_set_stage: cuánto subir (+) o bajar (-)
     pp: Optional[int] = None         # battle_set_pp: PP (sin pp = al máximo)
+    addr: Optional[str] = None       # debug_peek / debug_poke: dirección, ej. "0x022A8620"
+    length: Optional[int] = None     # debug_peek: bytes a leer (máx. 1024)
+    data: Optional[str] = None       # debug_poke: bytes en hex, ej. "01000000"
+    expect: Optional[str] = None     # debug_poke: bytes que debe haber antes (opcional, como guarda)
+    commands: Optional[list] = None  # debug_inject: [["UPDATE_HP_GAUGE", 12], ["SET_GAUGE_STATUS", 12, 1]]
+    show: bool = True                # battle_set_hp / battle_set_status: actualizar también la pantalla
 
 
 @dataclass
@@ -95,6 +103,20 @@ def build_commands(ev: Event) -> str:
     d = ev.data
     if d["type"] == "rollback":
         return "LOAD"
+    if d["type"] in ("debug_peek", "debug_poke", "debug_inject"):   # herramientas de investigación
+        if not getattr(config, "DEBUG_WRITES", False):
+            raise ValueError("herramientas de investigación desactivadas: pon DEBUG_WRITES = True en config_local.py")
+        if d["type"] == "debug_inject":
+            return f"J {battle_cmd.block(need(d, 'commands')).hex()}"
+        addr = int(str(need(d, "addr")), 16)
+        if not 0x02000000 <= addr < 0x02400000:
+            raise ValueError("la dirección debe estar en la Main RAM (0x02000000-0x023FFFFF)")
+        if d["type"] == "debug_peek":
+            return f"R {addr:#x} {int(d['length'] or 16)}"
+        data = bytes.fromhex(str(need(d, "data"))).hex()
+        if d["expect"]:
+            return f"SAVE;G {addr:#x} {bytes.fromhex(d['expect']).hex()} {data}"
+        return f"SAVE;W {addr:#x} {data}"
     if d["type"] in BATTLE_EVENTS:   # fase 5 (experimental): escribe en las dos copias del combatiente
         if game["mode"] != "battle":
             raise ValueError("no hay combate en curso")
@@ -103,12 +125,14 @@ def build_commands(ev: Event) -> str:
             raise ValueError("side debe ser 'player' o 'enemy'")
         slot = int(d["target"].get("slot", 0))
         if d["type"] == "battle_set_hp":
-            return "SAVE;" + battle.set_hp_command(side, slot, int(need(d, "hp")))
+            cmds = "SAVE;" + battle.set_hp_command(side, slot, int(need(d, "hp")))
+            return cmds + (";" + battle.show_hp_command(side, slot) if d.get("show", True) else "")
         if d["type"] == "battle_set_stage":
             return "SAVE;" + battle.set_stage_command(side, slot, str(need(d, "stat")), d["stage"], d["delta"])
         if d["type"] == "battle_set_pp":
             return "SAVE;" + battle.set_pp_command(side, slot, int(need(d, "move_slot")), d["pp"])
-        return "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")))
+        cmds = "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")))
+        return cmds + (";" + battle.show_status_command(side, slot, d["status"]) if d.get("show", True) else "")
     if d["type"] in NEEDS_DATA and not game["data_ok"]:
         raise ValueError("gen5_data.json no es de la ROM que se está jugando: configura ROM_PATH en config_local.py "
                          "o ejecuta  python rom.py <ruta.nds>  y reinicia el puente")
@@ -197,6 +221,8 @@ def next_commands() -> str:
     for eid in list(queue):
         ev = events[eid]
         when = "en_combate" if ev.data["type"] in BATTLE_EVENTS else ev.data["when"]
+        if ev.data["type"] in ("debug_peek", "debug_poke", "debug_inject"):
+            when = "cualquiera_incluso_menu"
         if game["mode"] not in WHEN_TO_MODES[when] and ev.data["type"] != "rollback":
             continue
         queue.remove(eid)

@@ -70,3 +70,13 @@ for bad in [lambda: battle.set_stage_command("player", 0, "hp", stage=1),
     except ValueError:
         pass
 print("ok estadísticas y PP en combate")
+
+# comandos de pantalla (opción 3): animar barra e ícono de estado, con el pokeID de la copia real
+raw = bytearray.fromhex(battler(hp=3)); raw[0x19] = 12
+battle.parse(f"T:00,e0:0225befc:{raw.hex()}:-,E0:0225cdf8:{raw.hex()}:-")
+assert battle.poke_id("enemy", 0) == 12
+assert battle.show_hp_command("enemy", 0) == "J 00410c"
+assert battle.show_status_command("enemy", 0, "paralysis") == "J 00350c01"
+assert battle.show_status_command("enemy", 0, "burn") == "J 00350c04"
+assert battle.show_status_command("enemy", 0, "none") == "J 00350c00"
+print("ok comandos de pantalla")

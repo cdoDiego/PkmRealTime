@@ -7,12 +7,14 @@ Cada combatiente tiene DOS copias con el mismo formato:
 Cada tabla: 6 punteros del jugador + contador, y desde +0x1C los del rival + contador.
 Cada uno apunta a una estructura de combatiente, sin cifrar:
   +0x00 puntero al Pokémon (PK5 cifrado, 220 bytes)   +0x04 puntero de Ilusión
+  +0x0C especie (u16)   +0x16 habilidad   +0x19 identificador en combate (pokeID)
   +0x0E HP máximo (u16)   +0x10 HP actual (u16)   +0x18 nivel (u8)   +0x20 estado (u32)
   +0xEE Atq, Def, AtE, DfE, Vel (u16)   +0xFC cambios de estadísticas (7 bytes, 6 = sin cambio)
   +0x104 movimientos: 4 × 14 bytes (u16 movimiento, u8 PP, ...)
 """
 import struct
 
+import battle_cmd
 import gamedata
 import pk5
 
@@ -62,7 +64,7 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
     u16 = lambda o: struct.unpack_from("<H", raw, o)[0]
     names = gamedata.DATA.get("moves", [])
     info = {
-        "index": idx, "addr": f"{addr:#010x}",
+        "index": idx, "addr": f"{addr:#010x}", "poke_id": raw[0x19],
         "hp": u16(OFF_HP), "max_hp": u16(OFF_MAX_HP), "level": raw[OFF_LEVEL],
         "status_raw": struct.unpack_from("<I", raw, OFF_STATUS)[0],
         "conditions": status_names(raw),
@@ -102,6 +104,23 @@ def _both(side: str, index: int):
         if (side, index, copy) not in RAW:
             raise ValueError(f"no hay combatiente {side} {index} ({copy}) en este combate")
         yield RAW[(side, index, copy)]
+
+
+def poke_id(side: str, index: int) -> int:
+    """Identificador del combatiente para los comandos de pantalla (byte +0x19 de la copia real)."""
+    _, raw = RAW[(side, index, "real")]
+    return raw[0x19]
+
+
+def show_hp_command(side: str, index: int) -> str:
+    """Comando J: anima la barra de vida hacia la vida de la copia visual (al reproducirse el turno)."""
+    return "J " + battle_cmd.encode("UPDATE_HP_GAUGE", poke_id(side, index)).hex()
+
+
+def show_status_command(side: str, index: int, status: str) -> str:
+    """Comando J: pone el ícono de estado (y el color) del combatiente. Validado con parálisis."""
+    value = 0 if status == "none" else SICK_INDEX[status]
+    return "J " + battle_cmd.encode("SET_GAUGE_STATUS", poke_id(side, index), value).hex()
 
 
 def set_status_command(side: str, index: int, status: str) -> str:

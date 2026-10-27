@@ -27,7 +27,8 @@ local BATTLER_SIZE = 0x140            -- bytes que se envían de cada combatient
 --   battle: u16, 0x2100/0x2101 = en combate
 --   menu:   u8, 0 = caminando libre; 1 = menú, diálogo, equipo, mochila, combate
 local GAMES = {
-  IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu = 0x0223B2F5 },
+  IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu = 0x0223B2F5,
+           adapters = 0x021DD8AC, client_proc = 0x021B1A15 },   -- combate: sAdapters y función del cliente (B2 + 0x40)
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
 
@@ -99,6 +100,55 @@ local function battle_hex(ptr_abs)
   return table.concat(parts, ",")
 end
 
+-- Inyección de comandos de combate (fase 5, opción 3, experimental): el bloque pendiente se inserta en la
+-- cola del cliente del jugador mientras reproduce un turno, en la posición de lectura, para que se vea enseguida.
+-- Cliente: +0x28 función, +0x50 adaptador, +0x13C cola, +0x1AF tipo, +0x1B0 estado (1 = ejecutando).
+-- Cola: u32 escritura, u32 lectura, búfer de 3000 bytes. Adaptador: +0x10 comando (8 = bloque del servidor).
+local pending_inject = nil
+local inject_status = ""
+local cached_adapter, cached_client = nil, nil
+
+local function battle_client(game)
+  local a = memory.read_u32_le(off(game.adapters), DOMAIN)
+  if a < BASE or a >= BASE + 0x400000 then return nil end
+  if a ~= cached_adapter then
+    cached_adapter, cached_client = a, nil
+    for delta = -0x2000, 0x2000, 4 do
+      local c = a + delta
+      if c >= BASE and memory.read_u32_le(off(c + 0x50), DOMAIN) == a
+         and memory.read_u32_le(off(c + 0x28), DOMAIN) == game.client_proc
+         and memory.read_u8(off(c + 0x1AF), DOMAIN) == 0 then
+        cached_client = c
+        break
+      end
+    end
+  end
+  return a, cached_client
+end
+
+local function try_inject(game)
+  local a, c = battle_client(game)
+  if c == nil then return end
+  if memory.read_u8(off(c + 0x1B0), DOMAIN) ~= 1 or memory.read_u16_le(off(a + 0x10), DOMAIN) ~= 8 then return end
+  local q = memory.read_u32_le(off(c + 0x13C), DOMAIN)
+  local wp = memory.read_u32_le(off(q), DOMAIN)
+  local rp = memory.read_u32_le(off(q + 4), DOMAIN)
+  if rp >= wp then return end                                   -- ya leyó todo el bloque: esperar al siguiente
+  if wp + #pending_inject > 3000 then
+    inject_status = "cola llena, descartado"; pending_inject = nil; return
+  end
+  local new = {}
+  for i = 1, #pending_inject do new[#new + 1] = pending_inject[i] end
+  local rest = memory.read_bytes_as_array(off(q + 8 + rp), wp - rp, DOMAIN)
+  local first = (rest[0] ~= nil) and 0 or 1
+  for i = first, first + wp - rp - 1 do new[#new + 1] = rest[i] end
+  memory.write_bytes_as_array(off(q + 8 + rp), new, DOMAIN)
+  memory.write_u32_le(off(q), wp + #pending_inject, DOMAIN)
+  inject_status = string.format("inyectados %d bytes (lectura %d de %d)", #pending_inject, rp, wp)
+  console.log("connector.lua: " .. inject_status)
+  pending_inject = nil
+end
+
 local function run(cmd)
   local op, a, b, c = cmd:match("^(%S+)%s*(%S*)%s*(%S*)%s*(%S*)")
   if op == "W" then
@@ -113,6 +163,16 @@ local function run(cmd)
     end
     memory.write_bytes_as_array(off(tonumber(a)), from_hex(c), DOMAIN)
     return true, "G " .. a
+  elseif op == "J" then                         -- inyectar comandos de combate en el siguiente turno
+    local extra = from_hex(a)
+    pending_inject = pending_inject or {}         -- si ya había algo pendiente, se acumula
+    for i = 1, #extra do pending_inject[#pending_inject + 1] = extra[i] end
+    inject_status = string.format("pendiente (%d bytes): se verá al reproducirse el turno", #pending_inject)
+    return true, "J pendiente"
+  elseif op == "R" then                         -- leer (herramienta de investigación)
+    local len = tonumber(b)
+    if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end
+    return true, "R:" .. read_hex(tonumber(a), len)
   elseif op == "SAVE" then
     savestate.saveslot(SAFETY_SLOT)
     return true, "SAVE"
@@ -167,11 +227,20 @@ while true do
     elseif addr ~= nil and mode == "battle" then
       battle = battle_hex(addr - PARTY_PTR_OFF)
     end
+    if mode ~= "battle" and pending_inject ~= nil then   -- el combate terminó: lo pendiente ya no aplica
+      pending_inject = nil
+      inject_status = "descartado (terminó el combate)"
+    end
     comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s", mode, addr or 0, party, bag, box, trainer,
                                         code:gsub("[^%w]", "_"), crc, battle))
     handle(comm.socketServerResponse())
     gui.text(4, 4, "puente: " .. mode)
     if game == nil then gui.text(4, 20, "juego no soportado: " .. code .. " (no se escribe nada)") end
   end
+  if pending_inject ~= nil then
+    local g = GAMES[game_id()]
+    if g ~= nil then try_inject(g) end
+  end
+  if inject_status ~= "" then gui.text(4, 36, "inyección: " .. inject_status) end
   emu.frameadvance()
 end

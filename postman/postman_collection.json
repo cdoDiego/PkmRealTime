@@ -2142,7 +2142,7 @@
     },
     {
       "name": "9. Combate (experimental)",
-      "description": "Enviar durante un combate, en '¿Qué hará…?'. Escriben en las dos copias del combatiente. Los efectos son reales, pero la barra de vida y el ícono de estado no se actualizan al momento. slot 0 = el Pokémon activo.",
+      "description": "Enviar durante un combate. Escriben en las dos copias del combatiente. La vida y el estado también se ven: la barra se anima y el ícono cambia con los gráficos del juego al reproducirse el turno (si se envía con el menú abierto, al empezar el turno siguiente). slot 0 = el Pokémon activo.",
       "item": [
         {
           "name": "Rival: vida a 1",
@@ -2189,7 +2189,7 @@
                 "events"
               ]
             },
-            "description": "La barra se actualiza con el siguiente cambio de vida."
+            "description": "La barra se anima al reproducirse el turno."
           }
         },
         {

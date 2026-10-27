@@ -61,6 +61,10 @@ LUA_PORT = 43884             # BizHawk se lanza con --socket_ip=127.0.0.1 --sock
 API_PORT = 8000
 API_TOKENS = {"dev-token-cambiame": "yo"}   # token -> nombre del cliente. Cámbialo en config_local.py
 
+# Herramientas de investigación (eventos debug_peek / debug_poke: leer y escribir cualquier dirección).
+# Desactivadas por defecto: actívalas en config_local.py solo con una partida de prueba.
+DEBUG_WRITES = False
+
 try:
     from config_local import *  # noqa: F401,F403  (configuración personal, no se sube a git)
 except ImportError:

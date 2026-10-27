@@ -14,3 +14,7 @@ API_TOKENS = {"cambia-este-token": "yo"}
 # Puertos (solo si los necesitas distintos)
 # LUA_PORT = 43884
 # API_PORT = 8000
+
+# Herramientas de investigación: eventos debug_peek / debug_poke (leer y escribir cualquier dirección).
+# Solo con una partida de prueba.
+# DEBUG_WRITES = True

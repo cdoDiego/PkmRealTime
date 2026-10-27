@@ -165,6 +165,76 @@ En la prueba, cada copia real estaba `0xEFC` bytes después de su visual, pero s
 - El **ícono de estado y el color** del Pokémon son de la interfaz y no cambian (siguió con PAR y en amarillo).
   Es el mismo caso que la barra de vida: la parte visual se actualiza solo con los eventos del combate.
 
+### Indicadores de vida en pantalla (opción A, en investigación)
+
+La pantalla de arriba tiene un **indicador** por Pokémon. Zona base: u32 en puntero + `0x90088` (tracker: `someBattleUIPtr`),
+que en las pruebas apuntaba siempre a `0x022A8514`. Tu indicador está en la zona + `0x88` (`0x022A859C`) y el del rival en
+la zona + `0x10C` (`0x022A8620`).
+
+| Offset | Campo |
+| --- | --- |
+| `+0x00` | Vida (u32): la de antes de la animación; al terminarla, la nueva |
+| `+0x04` | Vida máxima (u32) |
+| `+0x08` | Vida dibujada × 256 (u32) durante la animación; 0 en reposo |
+| `+0x20` | Daño de la última animación (u32) |
+| `+0x24` | Nivel (byte 0); bytes 1 y 3: género |
+| `+0x2C` | 1 desde la primera animación |
+
+Grabado durante un golpe (16 → 6): `+0x20` = 10, `+0x08` baja 16 → 15,3 → 12 → 8,7…, y al final `+0x00` = 6 y `+0x08` = 0.
+
+**Conclusión:** la barra **solo se redibuja mientras corre la animación** que pone en marcha el propio combate.
+Cambiar `+0x00` o `+0x08` a mano no la redibuja, y volver de la pantalla de Pokémon o de la mochila solo reconstruye
+la pantalla de abajo. El ícono de estado tampoco está en el indicador: no se encontró dónde lo guarda.
+
+### Servidor, cliente y comandos de combate (opción 3, investigación)
+
+Fuentes: [showdown-bw2](https://github.com/LuciPengu/showdown-bw2) (reproduce combates de Showdown dentro de BW2
+escribiendo en RAM con melonDS) y la decompilación [pokebw2](https://github.com/fuddlesworth/pokebw2)
+(`include/battle/btl_server_cmd.h`). Sus direcciones son de Black 2; en White 2 están **+0x40**.
+
+El combate es un **servidor** (la lógica) que manda **bloques de comandos** a los **clientes** (la pantalla del jugador y la IA)
+a través de un **adaptador** en RAM. El cliente copia el bloque a su cola interna y lo reproduce con las animaciones del juego.
+
+| Pieza | Black 2 | White 2 (volcados) |
+| --- | --- | --- |
+| `sAdapters[4]` (punteros a los adaptadores) | `0x021DD86C` | `0x021DD8AC` |
+| Función principal del cliente (Thumb) | `0x021B19D5` | `0x021B1A15` |
+| Cliente del jugador / su adaptador (en las pruebas) | — | `0x0225FFF4` / `0x02260274` |
+| Cola interna del cliente (puntero en cliente + `0x13C`) | — | `0x02260E70` |
+| Servidor (en las pruebas) | — | `0x0225D01C` |
+
+- **Adaptador:** `+0x04` datos de respuesta, `+0x08` tamaño de respuesta, `+0x0C` respondido (bit bajo), `+0x10` comando (u16:
+  3 = elegir acción, 8 = bloque de comandos), `+0x12` tamaño (u16), `+0x14` datos.
+- **Cliente:** `+0x00` módulo principal, `+0x28` función principal, `+0x50` adaptador, `+0x13C` cola interna,
+  `+0x1AF` tipo (0 = jugador), `+0x1B0` estado (0 libre, 1 ejecutando, 2 respondiendo).
+- **Cola:** `u32 escritura; u32 lectura; u8 búfer[3000]`. Al recibir un bloque: escritura = tamaño, lectura = 0.
+  Está vacía cuando lectura = escritura.
+- **Formato de un comando:** número de comando en u16 big-endian y sus argumentos empaquetados (tabla de formatos en
+  `src/bw/servercmd.ts` de showdown-bw2). Comprobado: los bloques reales de White 2 se leen igual
+  (ej. `00 0a 62 01` = `OP_LOWER_STAT_STAGE`, Pokémon 12, Defensa −1).
+- **Identificador de cada Pokémon (pokeID):** byte `+0x19` de su estructura de combate. Tu equipo 0–5; el rival en las pruebas, 12.
+- Comandos útiles: `OP_SUBTRACT_HP` (`0x01`), `OP_ADD_HP` (`0x02`), `OP_SET_CONDITION` (`0x0F`), `OP_CURE_CONDITION` (`0x10`),
+  `SET_GAUGE_STATUS` (`0x35`, ícono de estado), `UPDATE_HP_GAUGE` (`0x41`, anima la barra), `STAT_UP/DOWN_EFFECT`,
+  `MSG_STD`/`MSG_SET` (mensajes).
+
+**Rastreo de un turno** (`lua/trace_adapter.lua`): tras elegir acción, el servidor manda el bloque del turno (137 bytes) y el
+cliente **lo toma en el mismo frame**; luego lo reproduce durante unos 790 frames (13 s). Entre turnos el cliente queda libre
+solo 3 frames antes del siguiente "¿Qué hará…?".
+
+**Veredicto (27-oct):** es viable insertar comandos propios **en la cola interna del cliente mientras reproduce un turno**
+(en la posición de lectura, para que se vean enseguida). Límite: con el menú de acción abierto el cliente está ocupado, así que
+un evento enviado en ese momento se vería al empezar a reproducirse el turno siguiente.
+
+**Implementado y validado (27-oct):**
+- `battle_cmd.py` codifica los comandos; produce byte a byte los mismos bloques que el juego (`tests/test_battle_cmd.py`).
+- Comando `J <hex>` del Lua: deja el bloque pendiente (varios se acumulan). En cuanto el cliente del jugador está reproduciendo
+  un bloque del servidor (estado 1, comando 8) y le quedan comandos por leer, inserta el bloque en la posición de lectura y
+  sube la de escritura. Si el combate termina con algo pendiente, se descarta. En pantalla: línea "inyección: …".
+- `battle_set_hp` añade `UPDATE_HP_GAUGE` y `battle_set_status` añade `SET_GAUGE_STATUS` (con el mismo número de estado).
+- Prueba en el juego: Purrloin a 1 de vida y quemado → al empezar el turno, la barra bajó animada y apareció el ícono de
+  quemado; al final del turno la quemadura lo debilitó con su animación, y Oshawott ganó experiencia y subió de nivel.
+  Antes, con la inyección manual: barra + ícono PAR + color amarillo de la parálisis.
+
 ### Direcciones del tracker que aún no usamos (para la fase 5, combate)
 
 Son de `MemoryAddresses.lua` del NDS Ironmon Tracker (W2). Todas son puntero + offset, salvo que se diga otra cosa. **Ninguna está probada por nosotros.**
@@ -392,9 +462,10 @@ Eventos disponibles:
   El entrenador es el jugador (leído de su bloque de datos), así que le obedece.
   Datos de especies, experiencia y movimientos en `gen5_data.json`, generado desde la ROM (sección 6).
 - `battle_set_hp` (experimental, fase 5): cambia la vida de un combatiente en las dos copias. `side`: `enemy` o `player`;
-  `slot`: posición en la tabla (0 = el activo). Siempre espera a que haya combate. La barra se actualiza con el siguiente cambio de vida.
+  `slot`: posición en la tabla (0 = el activo). Siempre espera a que haya combate. La barra se anima con los gráficos del juego
+  cuando se reproduce el turno (si se envía con el menú abierto, al empezar el turno siguiente). `"show": false` para no animarla.
 - `battle_set_status` (experimental): deja solo esa condición principal (`none`, `paralysis`, `freeze`, `burn`, `poison`)
-  en las dos copias. Los efectos funcionan, pero el ícono y el color en pantalla no cambian. El sueño aún no (falta saber cómo guarda los turnos).
+  en las dos copias. El ícono y el color se actualizan igual que la barra (al reproducirse el turno). El sueño aún no (falta saber cómo guarda los turnos).
 - `battle_set_stage` (experimental): cambia una estadística en combate (`atk`, `def`, `spa`, `spd`, `spe`, `acc`, `eva`).
   `stage` fija el valor final (−6..+6); `delta` suma o resta niveles. En pantalla no se ve (Gen 5 no lo muestra).
 - `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
@@ -435,6 +506,9 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | `/state` muestra los cambios de estadísticas en combate de forma legible (`stages`: −6..+6, 0 = sin cambios). Nuevo `tests/test_battle.py`. |
 | 27-oct | Opción B de la fase 5: eventos `battle_set_stage` y `battle_set_pp` (dos copias; los PP también en la copia de respaldo del movimiento). Carpeta 9 de Postman. |
 | 27-oct | Opción B validada en el juego: estadísticas (Ataque +2 y Defensa del rival −2 → lo debilita de un golpe) y PP (al máximo se ve al instante; a 0 el rival cambia de movimiento y, sin ninguno, usa Forcejeo). |
+| 27-oct | Opción A: herramientas `debug_peek`/`debug_poke` (solo con `DEBUG_WRITES`). Encontrados los indicadores de vida de la pantalla de arriba; la barra solo se redibuja durante la animación de daño del combate, no al cambiar los datos ni al volver de otras pantallas. |
+| 27-oct | Investigación opción 3: gracias a showdown-bw2 y la decompilación pokebw2 se ubicaron en White 2 el adaptador, el cliente, el servidor y la cola de comandos del cliente (+0x40 respecto a Black 2). Formato de comandos confirmado con bloques reales. Veredicto: viable insertando en la cola del cliente durante la reproducción de un turno. |
+| 27-oct | **Opción 3 funcionando:** comandos de pantalla inyectados en la cola del cliente. `battle_set_hp` y `battle_set_status` ahora animan la barra y ponen el ícono con los gráficos del juego. Validado: barra + ícono de quemado + quemadura que lo debilita, con experiencia y subida de nivel normales. |
 
 ---
 
@@ -485,12 +559,15 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] Estado en combate: descifrado (lista de condiciones desde `+0x1C`) y quemadura escrita al rival: hace daño al final del turno.
 - [x] `battle_set_stage`: con Ataque +2 y Defensa del rival −2, el mismo golpe (desde el mismo savestate) pasó de quitar menos de media vida a debilitarlo.
 - [x] `battle_set_pp`: PP al máximo se ve al instante en el menú de Luchar (33/35 → 35/35). Con un movimiento del rival a 0 PP no lo usó; sin PP en ninguno, usó Forcejeo.
-- [ ] Ícono de estado y color en pantalla actualizados (parte visual).
+- [x] Barra de vida e ícono de estado actualizados con los gráficos del juego (inyección en la cola del cliente).
+- [ ] Evento enviado **durante** las animaciones de un turno: debería verse al momento.
+- [ ] Subir la vida (curar en combate): la barra debería subir animada.
+- [ ] Ícono de los demás estados (congelado, envenenado) y quitar el ícono (`none`).
 - [ ] Sueño (turnos dormido) y envenenamiento grave (contador).
 - [ ] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
 - [ ] Combate contra entrenador con varios Pokémon: el resto del equipo rival y los cambios de Pokémon.
 - [ ] Combate doble.
-- [ ] Barra de vida actualizada al momento.
+
 
 ### Por buscar
 - [ ] **Variable del buzón** (ver siguiente paso).
