@@ -1,0 +1,33 @@
+# --- Configuración personal (rutas, tokens) -----------------------------------
+config_local.py
+
+# --- Juegos y partidas: nunca se suben (copyright y archivos personales) -------
+*.nds
+*.sav
+*.dsv
+*.State
+*.mst
+
+# --- Datos generados desde la ROM de cada persona (python rom.py <ruta.nds>) ---
+gen5_data.json
+
+# --- Volcados de RAM y Pokémon exportados (se regeneran; pesan y son personales)
+dumps/*
+!dumps/.gitkeep
+pk5_export/*
+!pk5_export/.gitkeep
+
+# --- Python ---------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- Sistema y editores -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp

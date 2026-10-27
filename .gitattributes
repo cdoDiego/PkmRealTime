@@ -1,0 +1,8 @@
+# Saltos de línea normalizados en el repositorio
+* text=auto
+
+# Binarios
+*.bin binary
+*.pk5 binary
+*.nds binary
+*.sav binary

@@ -1,0 +1,2158 @@
+{
+  "info": {
+    "name": "White 2 en tiempo real",
+    "description": "Pruebas rápidas del puente (bridge.py). Ver DOCUMENTACION.md.\n\nVariables de la colección: baseUrl, token, eventId (se rellena solo al crear un evento).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Consultar",
+      "item": [
+        {
+          "name": "Estado del juego",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            },
+            "description": "Modo (map/menu/battle/unknown), dirección del equipo y Pokémon descifrados. Todos deben tener valid: true."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test('conectado', () => pm.expect(r.connected).to.be.true);",
+                  "pm.test('todos válidos', () => r.party.forEach(p => pm.expect(p.valid).to.be.true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar eventos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Todos los eventos con su estado."
+          }
+        },
+        {
+          "name": "Ver último evento",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Usa el id guardado al crear el último evento. Espera 1 segundo después de crearlo: debe pasar de pendiente a aplicado."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Estado (set_status)",
+      "description": "En Gen 5 el estado es un número 0-5; el puente lo traduce. Comprobar ícono en el menú y que la pantalla de datos abre.",
+      "item": [
+        {
+          "name": "Estado: burn",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"burn\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado: paralysis",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"paralysis\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado: sleep",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"sleep\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado: freeze",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"freeze\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado: poison",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"poison\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado: none",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"none\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. HP (set_hp)",
+      "item": [
+        {
+          "name": "HP = 5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "HP = 10",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"hp\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "HP = 0 (¿debilitado?)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Prueba de límite: ¿el juego lo muestra debilitado?",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"hp\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "HP = 999 (debe quedar en el máximo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"hp\": 999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "HP slot 1 = 5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Segundo Pokémon del equipo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 1\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Casos que deben fallar",
+      "item": [
+        {
+          "name": "Slot vacío (fallo esperado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Debe terminar en fallo: 'no hay Pokémon en el slot 5'. Revisar con 'Ver último evento'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"slot\": 5\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "En combate (fallo esperado, fase 5)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Enviar estando en combate. Debe terminar en fallo: 'en combate se escribe en la estructura de batalla (fase 5)'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"when\": \"en_combate\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rival (fallo esperado, fase 5)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_hp\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"hp\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estado 'toxic' (fallo esperado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Gen 5 no guarda 'toxic' fuera de combate. Se acepta en la cola y termina en fallo 'estado desconocido'.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_status\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"status\": \"toxic\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token incorrecto (401 esperado)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "token-malo"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "state"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Deshacer",
+      "item": [
+        {
+          "name": "Cancelar último evento (solo si está pendiente)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Prueba: abre el menú en el juego, crea un evento, ejecuta esto y cierra el menú. No debe aplicarse. Si ya se aplicó responde 409."
+          }
+        },
+        {
+          "name": "Rollback (cargar savestate ranura 9)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/rollback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rollback"
+              ]
+            },
+            "description": "Vuelve al estado anterior al último evento aplicado."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Curar, objetos y movimientos",
+      "description": "Fase B. Comprobar en el juego: HP/estado/PP en la pantalla de datos, el objeto equipado y los movimientos.",
+      "item": [
+        {
+          "name": "Curar a todo el equipo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"heal\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "HP al máximo, sin estado y PP al máximo en todos los slots, en un solo lote."
+          }
+        },
+        {
+          "name": "Curar slot 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"heal\",\n  \"target\": {\n    \"slot\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Objeto: Restos (234) al slot 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_item\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"item\": 234\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Objeto: Baya Aranja (155) al slot 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_item\",\n  \"target\": {\n    \"slot\": 1\n  },\n  \"item\": 155\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Objeto: quitar del slot 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_item\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"item\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Movimiento: Pistola Agua (55) en hueco 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_move\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"move_slot\": 2,\n  \"move\": 55\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Oshawott tiene 2 movimientos, así que el hueco 2 es el primero libre."
+          }
+        },
+        {
+          "name": "Movimiento: Surf (57) en hueco 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_move\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"move_slot\": 3,\n  \"move\": 57\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Movimiento repetido (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_move\",\n  \"target\": {\n    \"slot\": 0\n  },\n  \"move_slot\": 3,\n  \"move\": 33\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Placaje ya está en el hueco 0: debe fallar."
+          }
+        },
+        {
+          "name": "Hueco con vacío antes (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_move\",\n  \"target\": {\n    \"slot\": 1\n  },\n  \"move_slot\": 3,\n  \"move\": 55\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Patrat tiene 2 movimientos: el hueco 3 no se puede usar con el 2 vacío."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Mochila",
+      "description": "Dar y quitar objetos. Comprobar en la mochila del juego. /state muestra la mochila en 'bag'.",
+      "item": [
+        {
+          "name": "Dar 5 Pociones (17)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 17,\n  \"qty\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Dar 3 Bayas Aranja (155)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 155,\n  \"qty\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Dar 10 Poké Balls (4)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 4,\n  \"qty\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Dar 1 Superball (3)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 3,\n  \"qty\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Objeto nuevo en el bolsillo de objetos."
+          }
+        },
+        {
+          "name": "Dar MT01 (328)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 328\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "MT/MO: máximo 1."
+          }
+        },
+        {
+          "name": "Quitar 2 Poké Balls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"take_item\",\n  \"item\": 4,\n  \"qty\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Quitar todas las Pociones",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"take_item\",\n  \"item\": 17\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Sin qty = todas. Los objetos de detrás suben un puesto."
+          }
+        },
+        {
+          "name": "Objeto clave (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 621\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Los objetos clave se bloquean para no romper la historia."
+          }
+        },
+        {
+          "name": "Quitar algo que no tienes (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"take_item\",\n  \"item\": 38\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Regalar Pokémon (caja 1)",
+      "description": "Crea un Pokémon nuevo en el primer hueco libre de la caja 1. Comprobar en el PC: datos, movimientos, entrenador (Diego), y retirarlo al equipo. /state muestra la caja en 'box1'.",
+      "item": [
+        {
+          "name": "Bulbasaur nv 5",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 1,\n  \"level\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Movimientos por defecto: los de su nivel (Placaje, Gruñido)."
+          }
+        },
+        {
+          "name": "Pikachu nv 15 con Restos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 25,\n  \"level\": 15,\n  \"item\": 234\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Snivy nv 10 variocolor hembra",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 495,\n  \"level\": 10,\n  \"shiny\": true,\n  \"gender\": \"hembra\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Eevee nv 20 con movimientos elegidos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 133,\n  \"level\": 20,\n  \"moves\": [\n    33,\n    39,\n    98,\n    44\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Placaje, Látigo, Ataque Rápido, Mordisco."
+          }
+        },
+        {
+          "name": "Bulbasaur con habilidad oculta (Clorofila)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 1,\n  \"level\": 5,\n  \"hidden_ability\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Especie inexistente (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Género imposible (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"species\": 29,\n  \"gender\": \"macho\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Nidoran♀ solo puede ser hembra."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "token",
+      "value": "dev-token-cambiame"
+    },
+    {
+      "key": "eventId",
+      "value": "1"
+    }
+  ]
+}
