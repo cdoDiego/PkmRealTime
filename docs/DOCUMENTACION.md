@@ -235,6 +235,12 @@ un evento enviado en ese momento se vería al empezar a reproducirse el turno si
   quemado; al final del turno la quemadura lo debilitó con su animación, y Oshawott ganó experiencia y subió de nivel.
   Antes, con la inyección manual: barra + ícono PAR + color amarillo de la parálisis.
 
+**Posibilidad futura: verlo al instante con el menú abierto.** Con "¿Qué hará…?" abierto el cliente está ejecutando el comando
+de elegir acción. showdown-bw2 muestra que se puede: pausar la lógica (`server.state` = 2), cerrar el menú respondiéndolo
+(pulsaciones simuladas), mandar un bloque propio, volver a abrir el menú y, en nuestro caso, reanudar la lógica para que reciba
+la elección real. Es factible pero frágil (el menú se cierra y reabre, y pausar/reanudar la lógica puede trabar el combate).
+Decisión (27-oct): no por ahora; alternativa barata si hiciera falta, un aviso dibujado por el Lua mientras el evento espera.
+
 ### Direcciones del tracker que aún no usamos (para la fase 5, combate)
 
 Son de `MemoryAddresses.lua` del NDS Ironmon Tracker (W2). Todas son puntero + offset, salvo que se diga otra cosa. **Ninguna está probada por nosotros.**
