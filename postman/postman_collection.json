@@ -2193,6 +2193,102 @@
           }
         },
         {
+          "name": "Tu Pokémon: debilitar (vida 0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_hp\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"hp\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Se debilita como en el juego cuando el juego lo revisa (tras el primer golpe en que participe o al final del turno): mensaje, animación, experiencia y cambio de Pokémon. Puede atacar antes de caer."
+          }
+        },
+        {
+          "name": "Rival: debilitar (vida 0)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_hp\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"hp\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Se debilita como en el juego cuando el juego lo revisa (tras el primer golpe en que participe o al final del turno): mensaje, animación, experiencia y cambio de Pokémon. Puede atacar antes de caer."
+          }
+        },
+        {
           "name": "Tu Pokémon: vida al máximo",
           "event": [
             {

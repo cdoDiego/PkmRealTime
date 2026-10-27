@@ -28,7 +28,8 @@ local BATTLER_SIZE = 0x140            -- bytes que se envían de cada combatient
 --   menu:   u8, 0 = caminando libre; 1 = menú, diálogo, equipo, mochila, combate
 local GAMES = {
   IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu = 0x0223B2F5,
-           adapters = 0x021DD8AC, client_proc = 0x021B1A15 },   -- combate: sAdapters y función del cliente (B2 + 0x40)
+           adapters = 0x021DD8AC, client_proc = 0x021B1A15,     -- combate: sAdapters y función del cliente (B2 + 0x40)
+           check_fainted = 0x021A8A64 },                        -- ServerControl_CheckFainted (B2 + 0x40)
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
 
@@ -149,6 +150,36 @@ local function try_inject(game)
   pending_inject = nil
 end
 
+-- Debilitar (vida 0): el juego solo debilita a un Pokémon en ServerControl_CheckFainted(flow, mon), y no revisa a los
+-- que ya tienen 0. El puente deja la copia real a 1 y manda "F <dir>"; BizHawk avisa cada vez que el juego ejecuta
+-- esa función y, si r1 (mon) es uno pendiente y sigue a 1 de vida, se pone a 0 justo antes de que lo compruebe.
+-- El aviso solo se registra mientras hay algo pendiente (cada instrucción ejecutada se compara con la dirección).
+local pending_faint = {}          -- dirección de la copia real -> true
+local faint_hook = false
+local faint_status = ""
+
+local function faint_count()
+  local n = 0
+  for _ in pairs(pending_faint) do n = n + 1 end
+  return n
+end
+
+local function on_check_fainted()
+  local mon = emu.getregisters()["ARM9 r1"]
+  if mon == nil or not pending_faint[mon] then return end
+  pending_faint[mon] = nil
+  if memory.read_u16_le(off(mon + 0x10), DOMAIN) == 1 then
+    memory.write_u16_le(off(mon + 0x10), 0, DOMAIN)
+    faint_status = string.format("debilitado %08X", mon)
+  else
+    faint_status = string.format("cancelado %08X (su vida cambió)", mon)
+  end
+end
+
+local function faint_unhook()
+  if faint_hook then event.unregisterbyname("connector_faint"); faint_hook = false end
+end
+
 local function run(cmd)
   local op, a, b, c = cmd:match("^(%S+)%s*(%S*)%s*(%S*)%s*(%S*)")
   if op == "W" then
@@ -169,6 +200,17 @@ local function run(cmd)
     for i = 1, #extra do pending_inject[#pending_inject + 1] = extra[i] end
     inject_status = string.format("pendiente (%d bytes): se verá al reproducirse el turno", #pending_inject)
     return true, "J pendiente"
+  elseif op == "F" then                         -- debilitar cuando el juego revise a este combatiente
+    local game = GAMES[game_id()]
+    if game == nil or game.check_fainted == nil then return false, "F: falta check_fainted para este juego" end
+    if not faint_hook then
+      local ok, err = pcall(event.on_bus_exec, on_check_fainted, game.check_fainted, "connector_faint")
+      if not ok then return false, "F: este núcleo no admite avisos de ejecución: " .. tostring(err) end
+      faint_hook = true
+    end
+    pending_faint[tonumber(a)] = true
+    faint_status = string.format("pendiente %s: se debilita al revisarlo el juego", a)
+    return true, "F pendiente"
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
     if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end
@@ -206,6 +248,7 @@ local function handle(reply)
   comm.socketServerSend("RES " .. (ok_all and "ok" or "fail") .. " " .. table.concat(details, ","))
 end
 
+event.onexit(faint_unhook)
 comm.socketServerSetTimeout(50)
 console.log("connector.lua listo; conectado: " .. tostring(comm.socketServerIsConnected()))
 
@@ -231,6 +274,11 @@ while true do
       pending_inject = nil
       inject_status = "descartado (terminó el combate)"
     end
+    if mode ~= "battle" and faint_count() > 0 then
+      pending_faint = {}
+      faint_status = "descartado (terminó el combate)"
+    end
+    if faint_hook and faint_count() == 0 then faint_unhook() end   -- fuera del aviso, no desde dentro
     comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s", mode, addr or 0, party, bag, box, trainer,
                                         code:gsub("[^%w]", "_"), crc, battle))
     handle(comm.socketServerResponse())
@@ -242,5 +290,6 @@ while true do
     if g ~= nil then try_inject(g) end
   end
   if inject_status ~= "" then gui.text(4, 36, "inyección: " .. inject_status) end
+  if faint_status ~= "" then gui.text(4, 52, "debilitar: " .. faint_status) end
   emu.frameadvance()
 end

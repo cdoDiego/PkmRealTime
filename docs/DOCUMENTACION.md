@@ -235,6 +235,28 @@ un evento enviado en ese momento se vería al empezar a reproducirse el turno si
   quemado; al final del turno la quemadura lo debilitó con su animación, y Oshawott ganó experiencia y subió de nivel.
   Antes, con la inyección manual: barra + ícono PAR + color amarillo de la parálisis.
 
+### Debilitar con vida 0
+
+**Problema (27-oct):** con la vida puesta a 0 por fuera, tu Pokémon no se debilitó y el rival se quedó atacando y fallando en bucle.
+
+**Causa (decompilación pokebw2, `src/ov167/btl_server_flow.c`):** el juego solo debilita en `ServerControl_CheckFainted(flow, mon)`
+(mensaje, comando `FAINT`, experiencia y registro para pedir el cambio). La llama tras cada golpe (atacante y objetivos) y al final
+del turno para cada Pokémon **vivo** (`BtlFlow_IsMonAlive` = vida distinta de 0). Uno puesto a 0 por fuera ya cuenta como
+debilitado: no actúa, no se le puede atacar y la revisión del final del turno lo salta, así que nunca se procesa.
+
+**Solución:** la copia real queda a 1 y el Lua la pone a 0 justo cuando el juego llama a `CheckFainted` con ese Pokémon.
+- `CheckFainted` en White 2: `0x021A8A64` (Black 2 `0x021A8A24` + 0x40; empieza por `push {r3-r7, lr}` en los volcados).
+- BizHawk (melonDS) avisa al Lua al ejecutarse una dirección: `event.on_bus_exec`. El registro `ARM9 r1` es el `mon`, la dirección
+  de la copia real. Comprobado con `lua/trace_faint.lua`: en un turno sin daño hubo 10 llamadas (5 etapas del final del turno × 2).
+- Comando `F <dir>` del Lua: deja pendiente esa copia y registra el aviso (solo mientras hay algo pendiente, porque cada
+  instrucción se compara con la dirección). Al llegar la llamada, si sigue a 1 de vida, escribe 0; si cambió, se cancela.
+  Si el combate termina, se descarta. En pantalla: línea "debilitar: …".
+- `battle_set_hp` con 0 manda `F` (primero, para no escribir nada si el Lua no puede), la copia real a 1, la visual a 0 y
+  `UPDATE_HP_GAUGE` (la barra se vacía al empezar el turno).
+- Límite: el Pokémon aún ataca ese turno antes de debilitarse (la primera revisión llega tras su propio golpe).
+  **Mejora futura:** que caiga antes de actuar, cambiando el `r1` de una de las primeras llamadas a `CheckFainted` del turno por
+  el nuestro. Riesgo: el Pokémon que debía revisarse en esa llamada podría quedarse sin procesar (el mismo limbo de antes).
+
 **Posibilidad futura: verlo al instante con el menú abierto.** Con "¿Qué hará…?" abierto el cliente está ejecutando el comando
 de elegir acción. showdown-bw2 muestra que se puede: pausar la lógica (`server.state` = 2), cerrar el menú respondiéndolo
 (pulsaciones simuladas), mandar un bloque propio, volver a abrir el menú y, en nuestro caso, reanudar la lógica para que reciba
@@ -323,6 +345,9 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
+| | `J <hex>` inyecta comandos de pantalla en el siguiente turno del combate |
+| | `F <dir>` debilita a ese combatiente cuando el juego lo revise (vida 0) |
+| | `R <dir> <n>` lee bytes (herramienta de investigación) |
 | | `SAVE` / `LOAD` savestate de seguridad (ranura 9) |
 | Lua → Python | `RES <ok\|fail> <detalle>` tras cada lote |
 
@@ -336,6 +361,8 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | --- | --- | --- |
 | `lua/connector.lua` | Conecta el juego con el puente: lee el equipo y el modo, y ejecuta las escrituras | Siempre que uses el puente |
 | `lua/dump_ram.lua` | Ventanita con un botón **Volcar**: guarda la Main RAM (4 MB) en `dumps/<nombre>.bin` (la ruta se calcula sola desde la carpeta del script) | Para buscar direcciones nuevas |
+| `lua/trace_adapter.lua` | Registra frame a frame la comunicación lógica ↔ pantalla del combate en `dumps/trace_adapter.txt` | Investigación del combate |
+| `lua/trace_faint.lua` | Registra cada llamada a `CheckFainted` (con `r1` y la vida) en `dumps/trace_faint.txt` | Comprobar avisos de ejecución |
 | `lua/watch_ram.lua` | Muestra en pantalla el valor de las direcciones de la lista `WATCH`. Cada entrada puede ser fija o relativa al puntero | Para comprobar una dirección candidata en vivo |
 
 ### Python
@@ -470,6 +497,8 @@ Eventos disponibles:
 - `battle_set_hp` (experimental, fase 5): cambia la vida de un combatiente en las dos copias. `side`: `enemy` o `player`;
   `slot`: posición en la tabla (0 = el activo). Siempre espera a que haya combate. La barra se anima con los gráficos del juego
   cuando se reproduce el turno (si se envía con el menú abierto, al empezar el turno siguiente). `"show": false` para no animarla.
+  Vida 0: se debilita como en el juego (mensaje, animación, experiencia, cambio de Pokémon o derrota) en cuanto el juego lo
+  revisa (tras el primer golpe en que participe o al final del turno). Detalle en "Debilitar con vida 0" (sección 2).
 - `battle_set_status` (experimental): deja solo esa condición principal (`none`, `paralysis`, `freeze`, `burn`, `poison`)
   en las dos copias. El ícono y el color se actualizan igual que la barra (al reproducirse el turno). El sueño aún no (falta saber cómo guarda los turnos).
 - `battle_set_stage` (experimental): cambia una estadística en combate (`atk`, `def`, `spa`, `spd`, `spe`, `acc`, `eva`).
@@ -515,6 +544,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Opción A: herramientas `debug_peek`/`debug_poke` (solo con `DEBUG_WRITES`). Encontrados los indicadores de vida de la pantalla de arriba; la barra solo se redibuja durante la animación de daño del combate, no al cambiar los datos ni al volver de otras pantallas. |
 | 27-oct | Investigación opción 3: gracias a showdown-bw2 y la decompilación pokebw2 se ubicaron en White 2 el adaptador, el cliente, el servidor y la cola de comandos del cliente (+0x40 respecto a Black 2). Formato de comandos confirmado con bloques reales. Veredicto: viable insertando en la cola del cliente durante la reproducción de un turno. |
 | 27-oct | **Opción 3 funcionando:** comandos de pantalla inyectados en la cola del cliente. `battle_set_hp` y `battle_set_status` ahora animan la barra y ponen el ícono con los gráficos del juego. Validado: barra + ícono de quemado + quemadura que lo debilita, con experiencia y subida de nivel normales. |
+| 27-oct | Pruebas en tu propio Pokémon: vida a 5, veneno y curar funcionan con su animación. **Vida 0 directa deja el combate en bucle** (el rival ataca y falla): primero se puso mínimo 1, luego se resolvió con `F` (sección 2, "Debilitar con vida 0"). El puente rechaza campos desconocidos (un `side` fuera de `target` se aplicaba al rival sin avisar). |
+| 27-oct | Causa del bucle con vida 0 encontrada en la decompilación (`CheckFainted` salta a los que ya tienen 0). BizHawk sí avisa al ejecutarse una dirección (`trace_faint.lua`: 10 llamadas en un turno). Nuevo comando `F`: el Lua pone la vida a 0 justo cuando el juego revisa a ese Pokémon. |
 
 ---
 
@@ -561,14 +592,18 @@ o si la memoria cambió entre la lectura y la escritura.
 ### Fase 5: combate (en el juego)
 - [x] Leer ambos lados: vida, nivel, movimientos, PP, cambios de estadísticas (combate salvaje).
 - [x] `battle_set_hp` al rival en las dos copias: se debilita al siguiente golpe y el combate termina bien.
-- [ ] `battle_set_hp` a tu Pokémon (curarlo o bajarle la vida en combate).
+- [x] `battle_set_hp` a tu Pokémon: bajar a 5 (barra a rojo y 5/25) y curar de 5 a 25 (la barra sube animada).
+- [x] Vida 0 a tu Pokémon (primera versión): **no se debilita** y el rival ataca y falla en bucle.
+- [x] Vida 0 con `F`: Oshawott se debilitó con su animación, pidió el cambio y quedó debilitado en el equipo. Patrat salvaje:
+  se debilitó, Bulbasaur ganó experiencia y el combate terminó. En los dos casos el Pokémon atacó antes de caer (límite conocido).
 - [x] Estado en combate: descifrado (lista de condiciones desde `+0x1C`) y quemadura escrita al rival: hace daño al final del turno.
 - [x] `battle_set_stage`: con Ataque +2 y Defensa del rival −2, el mismo golpe (desde el mismo savestate) pasó de quitar menos de media vida a debilitarlo.
 - [x] `battle_set_pp`: PP al máximo se ve al instante en el menú de Luchar (33/35 → 35/35). Con un movimiento del rival a 0 PP no lo usó; sin PP en ninguno, usó Forcejeo.
 - [x] Barra de vida e ícono de estado actualizados con los gráficos del juego (inyección en la cola del cliente).
 - [ ] Evento enviado **durante** las animaciones de un turno: debería verse al momento.
-- [ ] Subir la vida (curar en combate): la barra debería subir animada.
-- [ ] Ícono de los demás estados (congelado, envenenado) y quitar el ícono (`none`).
+- [x] Subir la vida (curar en combate): la barra sube animada.
+- [x] Envenenado a tu Pokémon: ícono PSN, tinte morado y daño al final del turno.
+- [ ] Ícono de congelado y quitar el ícono (`none`).
 - [ ] Sueño (turnos dormido) y envenenamiento grave (contador).
 - [ ] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
 - [ ] Combate contra entrenador con varios Pokémon: el resto del equipo rival y los cambios de Pokémon.

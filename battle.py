@@ -169,7 +169,13 @@ def set_pp_command(side: str, index: int, move_slot: int, pp=None) -> str:
 
 
 def set_hp_command(side: str, index: int, hp: int) -> str:
-    """Comandos G que cambian la vida en las dos copias (solo si no cambiaron desde la última lectura)."""
+    """Comandos que cambian la vida en las dos copias (G: solo si no cambiaron desde la última lectura).
+
+    Vida 0: escrita directamente, el juego no debilita al Pokémon. Solo lo hace ServerControl_CheckFainted,
+    que no revisa a los que ya tienen 0 (si es el tuyo, el rival se queda atacando en bucle). Por eso la copia
+    real queda a 1 y "F <dir>" pide al Lua que la ponga a 0 justo cuando el juego vaya a revisarla: así se
+    debilita con su mensaje, experiencia y cambio de Pokémon. La copia visual pasa a 0 para vaciar la barra.
+    """
     cmds = []
     for copy in ("real", "visual"):
         if (side, index, copy) not in RAW:
@@ -177,5 +183,10 @@ def set_hp_command(side: str, index: int, hp: int) -> str:
         addr, raw = RAW[(side, index, copy)]
         max_hp = struct.unpack_from("<H", raw, OFF_MAX_HP)[0]
         new = max(0, min(hp, max_hp))
+        if new == 0 and copy == "real":
+            if struct.unpack_from("<H", raw, OFF_HP)[0] == 0:
+                raise ValueError("ese Pokémon ya está debilitado")
+            cmds.insert(0, f"F {addr:#x}")        # primero: si el Lua no puede, no se escribe nada
+            new = 1
         cmds.append(f"G {addr + OFF_HP:#x} {raw[OFF_HP:OFF_HP + 2].hex()} {struct.pack('<H', new).hex()}")
     return ";".join(cmds)

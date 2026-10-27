@@ -24,6 +24,8 @@ assert (e["hp"], e["hp_visual"], e["conditions"]) == (3, 0, ["paralysis"]), e
 
 # escrituras en las dos copias, con su guarda
 assert battle.set_hp_command("enemy", 0, 1) == "G 0x225ce08 0300 0100;G 0x225bf0c 0000 0100"
+# vida 0: la copia real queda a 1 y el Lua la debilita cuando el juego la revisa; la visual pasa a 0
+assert battle.set_hp_command("enemy", 0, 0) == "F 0x225cdf8;G 0x225ce08 0300 0100;G 0x225bf0c 0000 0000"
 cmd = battle.set_status_command("enemy", 0, "burn")
 assert cmd.count("G ") == 2 and cmd.split(";")[0].endswith("0000000000000000000000000100000000000000")
 for bad in [lambda: battle.set_status_command("enemy", 0, "sleep"), lambda: battle.set_hp_command("player", 3, 1)]:

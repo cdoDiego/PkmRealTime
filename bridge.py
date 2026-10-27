@@ -24,7 +24,7 @@ from typing import Literal, Optional
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import bag
 import battle
@@ -42,6 +42,8 @@ BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "batt
 
 
 class EventIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")   # un campo mal escrito o mal colocado da error en vez de ignorarse
+
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "debug_peek", "debug_poke", "debug_inject", "rollback"]
@@ -101,6 +103,9 @@ ws_clients: set[WebSocket] = set()
 def build_commands(ev: Event) -> str:
     """Convierte un evento en comandos para Lua. Lanza ValueError si no aplica."""
     d = ev.data
+    unknown = set(d["target"]) - {"side", "slot"}
+    if unknown:
+        raise ValueError(f"target solo admite side y slot, no {sorted(unknown)}")
     if d["type"] == "rollback":
         return "LOAD"
     if d["type"] in ("debug_peek", "debug_poke", "debug_inject"):   # herramientas de investigación
