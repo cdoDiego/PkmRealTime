@@ -2139,6 +2139,588 @@
           }
         }
       ]
+    },
+    {
+      "name": "9. Combate (experimental)",
+      "description": "Enviar durante un combate, en '¿Qué hará…?'. Escriben en las dos copias del combatiente. Los efectos son reales, pero la barra de vida y el ícono de estado no se actualizan al momento. slot 0 = el Pokémon activo.",
+      "item": [
+        {
+          "name": "Rival: vida a 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_hp\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"hp\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "La barra se actualiza con el siguiente cambio de vida."
+          }
+        },
+        {
+          "name": "Tu Pokémon: vida al máximo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_hp\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"hp\": 999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Rival: quemar",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_status\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"status\": \"burn\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Rival: paralizar",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_status\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"status\": \"paralysis\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Tu Pokémon: quitar estado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_status\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"status\": \"none\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Tu Pokémon: Ataque +2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_stage\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"stat\": \"atk\",\n  \"delta\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Suma 2 niveles (tope +6)."
+          }
+        },
+        {
+          "name": "Tu Pokémon: Velocidad a +6",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_stage\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"stat\": \"spe\",\n  \"stage\": 6\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Fija el valor final."
+          }
+        },
+        {
+          "name": "Rival: Defensa -2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_stage\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"stat\": \"def\",\n  \"delta\": -2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Rival: quitar cambios de Ataque",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_stage\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"stat\": \"atk\",\n  \"stage\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Tu Pokémon: PP del 1er movimiento al máximo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_pp\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"move_slot\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Rival: PP del 1er movimiento a 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_pp\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"move_slot\": 0,\n  \"pp\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Si se queda sin PP en todos sus movimientos, usará Forcejeo."
+          }
+        },
+        {
+          "name": "Estadística inválida (fallo esperado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_stage\",\n  \"target\": {\n    \"side\": \"player\",\n    \"slot\": 0\n  },\n  \"stat\": \"hp\",\n  \"delta\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
     }
   ],
   "variable": [

@@ -36,12 +36,13 @@ import pk5
 # ---------------------------------------------------------------- modelos
 When = Literal["en_mapa", "en_combate", "cualquiera"]
 WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"}}
-BATTLE_EVENTS = {"battle_set_hp", "battle_set_status"}   # siempre esperan al combate, aunque no se indique "when"
+BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp"}   # siempre esperan al combate, aunque no se indique "when"
 
 
 class EventIn(BaseModel):
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
-                  "give_pokemon", "battle_set_hp", "battle_set_status", "rollback"]
+                  "give_pokemon", "battle_set_hp", "battle_set_status",
+                  "battle_set_stage", "battle_set_pp", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
     hp: Optional[int] = None
@@ -57,6 +58,10 @@ class EventIn(BaseModel):
     gender: Optional[str] = None     # "macho" / "hembra"
     nature: Optional[int] = None     # 0-24
     hidden_ability: bool = False
+    stat: Optional[str] = None       # battle_set_stage: atk, def, spa, spd, spe, acc, eva
+    stage: Optional[int] = None      # battle_set_stage: valor final -6..+6
+    delta: Optional[int] = None      # battle_set_stage: cuánto subir (+) o bajar (-)
+    pp: Optional[int] = None         # battle_set_pp: PP (sin pp = al máximo)
 
 
 @dataclass
@@ -99,6 +104,10 @@ def build_commands(ev: Event) -> str:
         slot = int(d["target"].get("slot", 0))
         if d["type"] == "battle_set_hp":
             return "SAVE;" + battle.set_hp_command(side, slot, int(need(d, "hp")))
+        if d["type"] == "battle_set_stage":
+            return "SAVE;" + battle.set_stage_command(side, slot, str(need(d, "stat")), d["stage"], d["delta"])
+        if d["type"] == "battle_set_pp":
+            return "SAVE;" + battle.set_pp_command(side, slot, int(need(d, "move_slot")), d["pp"])
         return "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")))
     if d["type"] in NEEDS_DATA and not game["data_ok"]:
         raise ValueError("gen5_data.json no es de la ROM que se está jugando: configura ROM_PATH en config_local.py "

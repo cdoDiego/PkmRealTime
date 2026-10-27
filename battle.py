@@ -8,7 +8,7 @@ Cada tabla: 6 punteros del jugador + contador, y desde +0x1C los del rival + con
 Cada uno apunta a una estructura de combatiente, sin cifrar:
   +0x00 puntero al Pokémon (PK5 cifrado, 220 bytes)   +0x04 puntero de Ilusión
   +0x0E HP máximo (u16)   +0x10 HP actual (u16)   +0x18 nivel (u8)   +0x20 estado (u32)
-  +0xEE Atq, Def, AtE, DfE, Vel (u16)   +0xFC cambios de estadísticas
+  +0xEE Atq, Def, AtE, DfE, Vel (u16)   +0xFC cambios de estadísticas (7 bytes, 6 = sin cambio)
   +0x104 movimientos: 4 × 14 bytes (u16 movimiento, u8 PP, ...)
 """
 import struct
@@ -18,6 +18,15 @@ import pk5
 
 OFF_MAX_HP, OFF_HP, OFF_LEVEL, OFF_STATUS = 0x0E, 0x10, 0x18, 0x20
 OFF_STATS, OFF_STAGES, OFF_MOVES, MOVE_STRIDE = 0xEE, 0xFC, 0x104, 14
+
+# Cambios de estadísticas: 7 bytes desde +0xFC, 6 = sin cambio (rango 0-12 → -6..+6).
+# Validados en el juego: atk (Gruñido) y def (Malicioso, Látigo). El resto sigue el orden de las estadísticas.
+STAGE_NAMES = ("atk", "def", "spa", "spd", "spe", "acc", "eva")
+
+
+def stages(raw: bytes) -> dict:
+    """{"atk": 0, "def": -1, ...}: niveles de subida (+) o bajada (-) respecto a lo normal."""
+    return {name: raw[OFF_STAGES + i] - 6 for i, name in enumerate(STAGE_NAMES)}
 
 
 # Bytes crudos del último POLL: {("player"|"enemy", índice, "real"|"visual"): (dirección, estructura)}
@@ -58,13 +67,13 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
         "status_raw": struct.unpack_from("<I", raw, OFF_STATUS)[0],
         "conditions": status_names(raw),
         "stats": dict(zip(("atk", "def", "spa", "spd", "spe"), struct.unpack_from("<5H", raw, OFF_STATS))),
-        "stages": list(raw[OFF_STAGES:OFF_STAGES + 8]),
+        "stages": stages(raw),
         "moves": [],
     }
     for i in range(4):
-        move, pp = struct.unpack_from("<HB", raw, OFF_MOVES + MOVE_STRIDE * i)
+        move, pp, max_pp = struct.unpack_from("<HBB", raw, OFF_MOVES + MOVE_STRIDE * i)
         if move:
-            info["moves"].append({"id": move, "name": names[move] if move < len(names) else "?", "pp": pp})
+            info["moves"].append({"id": move, "name": names[move] if move < len(names) else "?", "pp": pp, "max_pp": max_pp})
     if mon_hex not in ("", "-"):
         plain = pk5.decrypt(bytes.fromhex(mon_hex))
         s = pk5.summary(plain)
@@ -103,6 +112,41 @@ def set_status_command(side: str, index: int, status: str) -> str:
     if status != "none":
         struct.pack_into("<I", new, 4 * (SICK_INDEX[status] - 1), 1)
     return ";".join(f"G {addr + BLOCK.start:#x} {raw[BLOCK].hex()} {new.hex()}" for addr, raw in _both(side, index))
+
+
+def set_stage_command(side: str, index: int, stat: str, stage=None, delta=None) -> str:
+    """Comandos G que fijan (stage, -6..+6) o suman (delta) niveles a una estadística, en las dos copias."""
+    if stat not in STAGE_NAMES:
+        raise ValueError(f"estadística desconocida: {stat} (válidas: {', '.join(STAGE_NAMES)})")
+    if (stage is None) == (delta is None):
+        raise ValueError("indica 'stage' (valor final, -6..+6) o 'delta' (cuánto subir o bajar), no los dos")
+    off = OFF_STAGES + STAGE_NAMES.index(stat)
+    cmds = []
+    for addr, raw in _both(side, index):
+        value = stage if stage is not None else raw[off] - 6 + delta
+        new = max(-6, min(6, int(value))) + 6
+        cmds.append(f"G {addr + off:#x} {raw[off]:02x} {new:02x}")
+    return ";".join(cmds)
+
+
+# Movimiento en combate (14 bytes): u16 movimiento, u8 PP, u8 PP máx, 2 bytes, y una copia de respaldo
+# de esos 6 bytes en +6 (para volver tras Transformación/Mimético). Se escriben los PP en las dos.
+MOVE_PP, MOVE_MAX_PP, MOVE_BACKUP = 2, 3, 6
+
+
+def set_pp_command(side: str, index: int, move_slot: int, pp=None) -> str:
+    """Comandos G que ponen los PP de un movimiento (None = al máximo), en las dos copias."""
+    if not 0 <= move_slot <= 3:
+        raise ValueError(f"hueco de movimiento fuera de rango (0-3): {move_slot}")
+    cmds = []
+    for addr, raw in _both(side, index):
+        base = OFF_MOVES + MOVE_STRIDE * move_slot
+        if struct.unpack_from("<H", raw, base)[0] == 0:
+            raise ValueError(f"el hueco {move_slot} no tiene movimiento")
+        value = raw[base + MOVE_MAX_PP] if pp is None else max(0, min(int(pp), raw[base + MOVE_MAX_PP]))
+        for off in (base + MOVE_PP, base + MOVE_BACKUP + MOVE_PP):
+            cmds.append(f"G {addr + off:#x} {raw[off]:02x} {value:02x}")
+    return ";".join(cmds)
 
 
 def set_hp_command(side: str, index: int, hp: int) -> str:

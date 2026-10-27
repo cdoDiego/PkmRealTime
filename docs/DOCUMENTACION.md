@@ -146,8 +146,8 @@ En la prueba, cada copia real estaba `0xEFC` bytes después de su visual, pero s
 | `+0x18` | Nivel | ✅ leído |
 | `+0x1C` | **Condiciones**: lista de u32, una por condición (índice = nº de estado de Gen 5). 0 = no la tiene, 1 = permanente. Parálisis `+0x20`, sueño `+0x24`, congelado `+0x28`, quemado `+0x2C`, envenenado `+0x30` | ✅ parálisis leída · ✅ quemadura escrita 27-oct |
 | `+0xEE` | Ataque, Defensa, At. Esp., Def. Esp., Velocidad (u16) | ✅ leídos |
-| `+0xFC` | Cambios de estadísticas: Atq, Def, AtE, DfE, Vel, Precisión, Evasión (6 = sin cambio) | ✅ leídos (Malicioso: Def 6 → 5) |
-| `+0x104` | 4 movimientos × 14 bytes (u16 movimiento, u8 PP, ...) | ✅ leídos (PP bajan al usarlos) |
+| `+0xFC` | Cambios de estadísticas: Atq, Def, AtE, DfE, Vel, Precisión, Evasión (1 byte cada uno, 0–12, 6 = sin cambio) | ✅ leídos: Ataque (Gruñido) y Defensa (Malicioso, Látigo); el resto, por orden |
+| `+0x104` | 4 movimientos × 14 bytes: u16 movimiento, u8 PP, u8 PP máx, 2 bytes, y en `+6` una copia de respaldo de esos 6 bytes (para volver tras Transformación/Mimético) | ✅ leídos (PP bajan al usarlos) |
 
 **Lo que se aprendió escribiendo la vida:**
 - Escribir solo la copia visual: la barra no cambia. Al siguiente golpe, el juego calcula el daño con la copia real
@@ -275,6 +275,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | `python gift.py <especie> <nivel> --dump dumps\x.bin --out x.pk5` | Genera un `.pk5` para abrirlo en PKHeX (copia el entrenador del volcado) |
 | `python tests/test_gift.py` | Pruebas del generador de regalos |
 | `python rom.py "ruta.nds"` | Genera `gen5_data.json` desde la ROM (`--info`: solo dice qué juego es) |
+| `python tests/test_battle.py` | Pruebas de la lectura y escritura de combate (usa `dumps/combate1.bin` si existe) |
 | `python tests/test_rom.py` | Pruebas de la lectura de la ROM (incluye una ROM aleatorizada simulada) |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
@@ -347,13 +348,20 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
-| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`) y combate (`battle`: copia real de cada lado, con `hp_visual`) |
+| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`) y combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) |
 | `POST` | `/events` | Encola un evento. Devuelve su `id` |
 | `GET` | `/events` | Lista todos los eventos |
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
 | `DELETE` | `/events/{id}` | Cancela un evento `pendiente` |
 | `POST` | `/rollback` | Carga el savestate de la ranura 9 (estado anterior al último evento) |
 | `WS` | `/ws?token=...` | Avisos en vivo del estado y de los eventos |
+
+En combate, cada combatiente de `battle` muestra sus cambios de estadísticas así
+(en el juego solo se ven como mensajes en el momento):
+```json
+"stages": {"atk": 0, "def": -1, "spa": 0, "spd": 0, "spe": 2, "acc": 0, "eva": 0}
+```
+`0` = sin cambios; `-1` = un nivel menos (ej. tras Malicioso); `+2` = dos niveles más. Van de −6 a +6.
 
 Eventos disponibles:
 ```json
@@ -368,6 +376,8 @@ Eventos disponibles:
 {"type": "give_pokemon", "species": 1, "level": 5}          // a la caja 1
 {"type": "battle_set_hp", "target": {"side": "enemy", "slot": 0}, "hp": 1}   // en combate (experimental)
 {"type": "battle_set_status", "target": {"side": "enemy", "slot": 0}, "status": "burn"}
+{"type": "battle_set_stage", "target": {"side": "player", "slot": 0}, "stat": "atk", "delta": 2}   // o "stage": valor final
+{"type": "battle_set_pp", "target": {"side": "enemy", "slot": 0}, "move_slot": 0, "pp": 0}       // sin pp = al máximo
 {"type": "give_pokemon", "species": 495, "level": 10, "shiny": true, "gender": "hembra",
  "item": 234, "moves": [33, 43, 22], "nature": 3, "hidden_ability": false}
 ```
@@ -385,6 +395,11 @@ Eventos disponibles:
   `slot`: posición en la tabla (0 = el activo). Siempre espera a que haya combate. La barra se actualiza con el siguiente cambio de vida.
 - `battle_set_status` (experimental): deja solo esa condición principal (`none`, `paralysis`, `freeze`, `burn`, `poison`)
   en las dos copias. Los efectos funcionan, pero el ícono y el color en pantalla no cambian. El sueño aún no (falta saber cómo guarda los turnos).
+- `battle_set_stage` (experimental): cambia una estadística en combate (`atk`, `def`, `spa`, `spd`, `spe`, `acc`, `eva`).
+  `stage` fija el valor final (−6..+6); `delta` suma o resta niveles. En pantalla no se ve (Gen 5 no lo muestra).
+- `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
+  Los PP sí se ven al momento en el menú de Luchar. Si el rival ya había elegido ese movimiento para el turno, lo intenta
+  igual y sale el mensaje de que no le quedan PP (sin efecto), como en el juego normal.
 - Si un evento escribe en varios slots, el Lua revisa todos antes de escribir: o se aplican todos o ninguno.
 `when`: `"en_mapa"` (por defecto), `"en_combate"` (hoy siempre falla: fase 5) o `"cualquiera"`.
 
@@ -417,6 +432,9 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Fase 5: lectura del combate validada (vida, PP, cambios de estadísticas). Escribir solo la copia visual dejó un combate incoherente (Patrat con barra vacía pero vivo). Con un volcado se encontró la copia real (tabla en puntero + `0x52790`). Escribiendo las dos, el Patrat con 1 de vida se debilitó con un Placaje y el combate terminó bien. |
 | 27-oct | Estado en combate descifrado: no es un número en `+0x20`, sino una lista de condiciones desde `+0x1C` (la parálisis es la entrada 1). Quemadura escrita al rival: hace su daño al final del turno. El ícono y el color de pantalla no cambian (parte visual). |
 | 27-oct | Repositorio git: archivos ordenados en carpetas (`lua/`, `tools/`, `tests/`, `docs/`, `postman/`), configuración personal en `config_local.py`, `.gitignore`, `tests/run_all.py`. |
+| 27-oct | `/state` muestra los cambios de estadísticas en combate de forma legible (`stages`: −6..+6, 0 = sin cambios). Nuevo `tests/test_battle.py`. |
+| 27-oct | Opción B de la fase 5: eventos `battle_set_stage` y `battle_set_pp` (dos copias; los PP también en la copia de respaldo del movimiento). Carpeta 9 de Postman. |
+| 27-oct | Opción B validada en el juego: estadísticas (Ataque +2 y Defensa del rival −2 → lo debilita de un golpe) y PP (al máximo se ve al instante; a 0 el rival cambia de movimiento y, sin ninguno, usa Forcejeo). |
 
 ---
 
@@ -465,6 +483,8 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] `battle_set_hp` al rival en las dos copias: se debilita al siguiente golpe y el combate termina bien.
 - [ ] `battle_set_hp` a tu Pokémon (curarlo o bajarle la vida en combate).
 - [x] Estado en combate: descifrado (lista de condiciones desde `+0x1C`) y quemadura escrita al rival: hace daño al final del turno.
+- [x] `battle_set_stage`: con Ataque +2 y Defensa del rival −2, el mismo golpe (desde el mismo savestate) pasó de quitar menos de media vida a debilitarlo.
+- [x] `battle_set_pp`: PP al máximo se ve al instante en el menú de Luchar (33/35 → 35/35). Con un movimiento del rival a 0 PP no lo usó; sin PP en ninguno, usó Forcejeo.
 - [ ] Ícono de estado y color en pantalla actualizados (parte visual).
 - [ ] Sueño (turnos dormido) y envenenamiento grave (contador).
 - [ ] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
