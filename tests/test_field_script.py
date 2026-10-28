@@ -47,3 +47,12 @@ args = "0080" "1900" "0000" "0a00" "0200" "0100" "0100" "0000" "0400"
 assert g == "0e01" + args + "1900" "0080" "0100" "1f00" "01" "14000000" + "2301" + args + "0200", g
 assert len(bytes.fromhex("2301" + args)) == 20
 print("ok guiones del mapa")
+
+# huevo: orden 0x010F (resultado, especie, forma) y fin
+assert field_script.give_egg(1) == "0f01" + "0080" + "0100" + "0000" + "0200"
+for bad in [lambda: field_script.give_egg(0), lambda: field_script.give_egg(1, 40)]:
+    try:
+        bad(); raise SystemExit("debía fallar")
+    except ValueError:
+        pass
+print("ok huevo")

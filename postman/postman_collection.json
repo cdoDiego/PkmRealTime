@@ -2377,6 +2377,150 @@
             },
             "description": "Lo crea el juego (orden 0x010E). Si el equipo está lleno va a la primera caja con sitio. Opciones: form, hidden_ability, gender, item, ball, shiny. Sin movimientos ni naturaleza."
           }
+        },
+        {
+          "name": "Regalar huevo (give_egg)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_egg\",\n  \"species\": 4\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Huevo al equipo con la orden del juego (solo si hay sitio en el equipo)."
+          }
+        },
+        {
+          "name": "Regalar huevo que eclosiona rápido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_egg\",\n  \"species\": 172,\n  \"hatch_cycles\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "hatch_cycles 0: eclosiona en menos de 256 pasos."
+          }
+        },
+        {
+          "name": "Ciclos de un huevo del equipo (set_egg_cycles)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"set_egg_cycles\",\n  \"target\": {\n    \"slot\": 4\n  },\n  \"hatch_cycles\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Para un huevo que ya está en el equipo."
+          }
         }
       ]
     },

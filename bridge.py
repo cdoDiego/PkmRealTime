@@ -41,14 +41,14 @@ WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"m
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
 BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather",
                  "battle_set_item"}   # siempre esperan al combate
-FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport"}   # esperan al mapa (personaje libre)
+FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_egg"}   # esperan al mapa (personaje libre)
 
 
 class EventIn(BaseModel):
     model_config = ConfigDict(extra="forbid")   # un campo mal escrito o mal colocado da error en vez de ignorarse
 
-    type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
-                  "give_pokemon", "battle_set_hp", "battle_set_status",
+    type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
+                  "give_pokemon", "give_egg", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
@@ -87,6 +87,7 @@ class EventIn(BaseModel):
     zone: Optional[str] = None       # teleport: ciudad (aspertia, castelia...) o número de zona
     x: Optional[int] = None          # teleport: casilla (opcional, con z)
     z: Optional[int] = None
+    hatch_cycles: Optional[int] = None   # give_egg / set_egg_cycles: ciclos para eclosionar (0-255; 0 = casi ya)
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
 
 
@@ -103,6 +104,7 @@ class Event:
 _ids = itertools.count(1)
 events: dict[int, Event] = {}
 queue: list[int] = []
+pending_egg: Optional[dict] = None   # give_egg con hatch_cycles: hueco y especie del huevo que se espera ver llegar
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "money": None, "badges": None,
@@ -150,6 +152,16 @@ def build_commands(ev: Event) -> str:
                                                         d.get("no_flee"))
         if d["type"] == "start_trainer_battle":
             return "SAVE;S " + field_script.trainer_battle(int(need(d, "trainer")))
+        if d["type"] == "give_egg":
+            if len(party_raw) >= 6:
+                raise ValueError("el equipo está lleno: el juego solo da huevos al equipo")
+            cmds = "SAVE;S " + field_script.give_egg(int(need(d, "species")), int(d.get("form") or 0))
+            if d.get("hatch_cycles") is not None:
+                if not 0 <= int(d["hatch_cycles"]) <= 255:
+                    raise ValueError("hatch_cycles debe ir de 0 a 255")
+                global pending_egg   # en cuanto aparezca en el equipo se le ponen los ciclos (set_egg_cycles)
+                pending_egg = {"slot": len(party_raw), "species": int(d["species"]), "cycles": int(d["hatch_cycles"])}
+            return cmds
         if d["type"] == "teleport":
             return "SAVE;S " + field_script.teleport(str(need(d, "zone")), d.get("x"), d.get("z"))
         global persistent_weather
@@ -256,6 +268,8 @@ def apply_change(d: dict, old: bytes) -> bytearray:
         return pk5.heal(old)
     if t == "set_item":
         return pk5.set_item(old, int(need(d, "item")))
+    if t == "set_egg_cycles":
+        return pk5.set_egg_cycles(old, int(need(d, "hatch_cycles")))
     if t == "set_move":
         return pk5.set_move(old, int(need(d, "move_slot")), int(need(d, "move")))
     raise ValueError(f"tipo no implementado: {t}")
@@ -303,6 +317,13 @@ def update_party(hexdata: str) -> None:
     size = config.PARTY_SLOT_SIZE
     party_raw[:] = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
     game["party"] = [pk5.summary(pk5.decrypt(r)) for r in party_raw]
+    global pending_egg
+    if pending_egg and pending_egg["slot"] < len(game["party"]):
+        mon = game["party"][pending_egg["slot"]]
+        if mon["valid"] and mon["egg"] and mon["species"] == pending_egg["species"]:
+            add_event(EventIn(type="set_egg_cycles", target={"slot": pending_egg["slot"]},
+                              hatch_cycles=pending_egg["cycles"]), "eclosión rápida")
+        pending_egg = None
     # slots vacíos o inválidos se marcan con valid=False; la app puede ocultarlos
 
 

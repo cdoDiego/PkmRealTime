@@ -129,7 +129,10 @@ def summary(plain: bytes) -> dict:
         ability=plain[0x15],
         hidden_ability=bool(plain[0x42] & 1),
         nature=plain[0x41],
+        egg=bool(struct.unpack_from("<I", plain, 0x38)[0] >> 30 & 1),   # bit 30 de las IV
     )
+    if info["egg"]:
+        info["egg_cycles"] = plain[0x14]   # en un huevo, la amistad cuenta los ciclos que faltan (256 pasos cada uno)
     if len(plain) >= PARTY_SIZE:
         st = struct.unpack_from("<I", plain, OFF_STATUS)[0]
         info.update(
@@ -171,6 +174,18 @@ def set_item(raw: bytes, item: int) -> bytearray:
         raise ValueError(f"objeto fuera de rango (0-{MAX_ITEM}): {item}")
     p = decrypt(raw)
     struct.pack_into("<H", p, OFF_HELD_ITEM, item)
+    return encrypt(p)
+
+
+def set_egg_cycles(raw: bytes, cycles: int) -> bytearray:
+    """Ciclos que le faltan a un huevo para eclosionar (la amistad, 0x14). Cada ciclo son 256 pasos; con 0 eclosiona
+    al terminar el ciclo de pasos en curso."""
+    if not 0 <= cycles <= 255:
+        raise ValueError("hatch_cycles debe ir de 0 a 255")
+    p = decrypt(raw)
+    if not summary(p)["egg"]:
+        raise ValueError("ese Pokémon no es un huevo")
+    p[0x14] = cycles
     return encrypt(p)
 
 

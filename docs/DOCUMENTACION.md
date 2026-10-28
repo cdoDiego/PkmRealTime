@@ -302,7 +302,7 @@ derrota · `0x0085` combate contra entrenador (entrenador 1, entrenador 2, opcio
 `0x008E` fin del combate contra entrenador · `0x0019` comparar variable con valor · `0x001F` saltar si (condición u8, salto u32) ·
 `0x0136` clima del mapa (clima, inmediato) · `0x028A` volar a una zona (zona, dirección) · `0x00C2` ir a una casilla (zona, x, z,
 dirección) · `0x010E` añadir al equipo (resultado, especie, forma, nivel, habilidad, sexo, variocolor, objeto, ball) · `0x0123`
-lo mismo a la primera caja con sitio · `0x0002` fin. Se arman en `field_script.py`. Tras cada combate el guion pregunta si
+lo mismo a la primera caja con sitio · `0x010F` huevo al equipo (resultado, especie, forma) · `0x0002` fin. Se arman en `field_script.py`. Tras cada combate el guion pregunta si
 ganó: si perdió, derrota; si no, vuelta al mapa (sin eso, perder cuelga el juego).
 
 **Desplazamiento White 2 / Black 2:** los símbolos públicos son de Black 2. Para el código principal es `+0x2C` y para los
@@ -585,6 +585,12 @@ Eventos disponibles:
 - `give_pokemon` con `"destination": "party"`: lo crea el juego (entrenador, lugar de captura actual, Pokédex) y lo mete en el
   equipo; si está lleno, en la primera caja con sitio (de cualquier caja). Opciones: `level`, `form`, `gender`, `hidden_ability`,
   `item`, `ball`, `shiny`. Movimientos y naturaleza los decide el juego (para elegirlos, el método de la caja 1).
+- `give_egg`: huevo de `species` (y `form`) al equipo, con la orden del juego (`s010F_PokePartyAddEgg`): tu nombre de entrenador,
+  los ciclos normales para eclosionar y el origen de un huevo. Solo al equipo: con 6 Pokémon da error. `/state` muestra `egg` y
+  `egg_cycles` (ciclos que faltan, 256 pasos cada uno). Con `hatch_cycles` (0-255) el puente le pone esos ciclos en cuanto aparece
+  en el equipo (0 = eclosiona en menos de 256 pasos). La orden del juego para la amistad (`0x00FD`) se salta los huevos, por eso se
+  escribe desde fuera (amistad, `0x14` del PK5).
+- `set_egg_cycles`: lo mismo para un huevo que ya está en el equipo (`target.slot`, `hatch_cycles`).
 - `start_wild_battle`: combate salvaje contra `species` de nivel `level` (por defecto 5), en cualquier sitio del mapa (no hace falta
   hierba). Espera a que el personaje esté libre. Opciones (orden `0x0297` y sus flags, `EventWildBattleCall_CreateStatic`):
   `form`, `shiny` (flag `0x02`), `gender` (`0x20` macho / `0x40` hembra), `hidden_ability` (`0x08`), `no_flee` (`0x01`).
@@ -645,6 +651,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Combate salvaje con opciones (forma, variocolor `0x02`, sexo, oculta, sin huida) validado. Objetos en combate: la mochila es la misma, el Lua la manda también en combate. `/state` muestra variocolor, sexo, forma y habilidad. |
 | 28-oct | Derrota en combate salvaje forzado validada (al Centro Pokémon, sin error). Objetos en combate validados con el Lua recargado. |
 | 28-oct | Objeto en combate (`battle_set_item`, orden `I` del Lua): además de `+0x12`, registra sus efectos en la lista del combate como hace Truco. Validado (quitar Restos, dar Baya Zidra). Los eventos de combate esperan a que existan los combatientes y los datos del combate anterior se borran al salir. |
+| 28-oct | Huevos (`give_egg`, orden `0x010F` del juego) validados: eclosión normal caminando. `/state` marca los huevos. |
+| 28-oct | Eclosión rápida (`hatch_cycles`, `set_egg_cycles`) validada. |
 
 ---
 
@@ -719,6 +727,10 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] Combate doble (salvaje): `slot` 0 y 1 son los dos en el campo. Vida, parálisis y envenenamiento grave salen en la barra
   correcta; vida 0 a un rival: se debilita solo él y el combate sigue con el otro.
 
+
+### Huevos (en el juego)
+- [x] `give_egg` Charmander: llegó al equipo como Huevo (20 ciclos), eclosionó caminando con su animación y salió Charmander.
+- [x] `give_egg` Pichu con `hatch_cycles: 0`: el puente le puso 0 ciclos al llegar (`set_egg_cycles` automático) y eclosionó tras pocos pasos.
 
 ### Dinero (en el juego)
 - [x] `give_money` 1000: ₽7188 → ₽8188 en la Tarjeta de Entrenador; guardar y reiniciar lo conserva.

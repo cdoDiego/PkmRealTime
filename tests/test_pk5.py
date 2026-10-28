@@ -59,3 +59,21 @@ try:
 except ValueError:
     pass
 print("ok fase B")
+
+# ---- huevos: bit 30 de las IV; la amistad son los ciclos que faltan
+p = bytearray(os.urandom(pk5.PARTY_SIZE))
+struct.pack_into("<I", p, 0x38, struct.unpack_from("<I", p, 0x38)[0] | (1 << 30))
+p[0x14] = 20
+struct.pack_into("<H", p, 6, pk5.checksum(p))
+s = pk5.summary(p)
+assert s["egg"] and s["egg_cycles"] == 20, s
+d = pk5.decrypt(pk5.set_egg_cycles(pk5.encrypt(p), 0))
+assert d[0x14] == 0 and pk5.is_valid(d) and d[0x15:] == p[0x15:] and d[8:0x14] == p[8:0x14]   # solo cambia eso (y el checksum)
+struct.pack_into("<I", p, 0x38, struct.unpack_from("<I", p, 0x38)[0] & ~(1 << 30))
+struct.pack_into("<H", p, 6, pk5.checksum(p))
+for bad in [lambda: pk5.set_egg_cycles(pk5.encrypt(p), 0), lambda: pk5.set_egg_cycles(pk5.encrypt(p), 300)]:
+    try:
+        bad(); raise SystemExit("debía fallar")
+    except ValueError:
+        pass
+print("ok huevos")

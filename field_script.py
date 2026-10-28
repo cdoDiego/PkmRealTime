@@ -35,6 +35,7 @@ CMD_FLY_WARP = 0x028A               # s028A_MapChangeFlyWarp(zona, dirección): 
 CMD_WARP = 0x00C2                   # s00C2_MapChangeWarp(zona, x, z, dirección): a una casilla concreta
 DIR_DOWN = 1
 CMD_PARTY_ADD_EX = 0x010E           # s010E_PokePartyAddEx(resultado, especie, forma, nivel, habilidad, sexo, param1C, objeto, ball)
+CMD_PARTY_ADD_EGG = 0x010F          # s010F_PokePartyAddEgg(resultado, especie, forma): huevo al equipo (nada si está lleno)
 CMD_BOX_ADD_EX = 0x0123             # s0123_BoxAddEx: lo mismo, a la primera caja con sitio (src/ov012/scrcmd_pokemon.c)
 # habilidad: 2 = la normal al azar, 3 = la oculta · sexo: 0 macho, 1 hembra, 2 al azar · param1C: 2 = lo normal
 # (sin nombre en la decompilación: es el variocolor, 1 = sí, validado 27-oct) · ball: 4 = Poké Ball
@@ -153,3 +154,14 @@ def trainer_info(trainer: int) -> dict:
     classes = gamedata.DATA.get("trainer_classes", [])
     return {"id": trainer, "class": classes[t[0]] if t[0] < len(classes) else t[0],
             "battle_type": ("individual", "doble", "triple", "rotatorio")[t[1]] if t[1] < 4 else t[1], "pokemon": t[2]}
+
+
+def give_egg(species: int, form: int = 0) -> str:
+    """Huevo al equipo con la orden del juego: tu nombre de entrenador, los ciclos normales para eclosionar y el origen
+    de un huevo. Si el equipo está lleno, el juego no lo crea (no hay versión para la caja)."""
+    max_species = len(gamedata.DATA.get("species", {})) or 649
+    if not 1 <= species <= max_species:
+        raise ValueError(f"especie fuera de rango: {species} (1-{max_species})")
+    if not 0 <= form < 32:
+        raise ValueError("forma fuera de rango (0-31)")
+    return _words(CMD_PARTY_ADD_EGG, TEMP_VAR, species, form, CMD_END)
