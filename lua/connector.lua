@@ -34,7 +34,10 @@ local GAMES = {
            check_fainted = 0x021A8A64,                          -- ServerControl_CheckFainted (B2 + 0x40)
            reserve_get = 0x0201936C,                            -- FieldStatus_GetReserveScript (B2 + 0x2C)
            script_vm = 0x02153DC8,                              -- FieldScript_AttachOpcodeGuard (B2 + 0x40)
-           battle_field = 0x021DD928 },                         -- sField: clima del combate (B2 + 0x40)
+           battle_field = 0x021DD928,                           -- sField: clima del combate (B2 + 0x40)
+           item_table = 0x021D8F68,                             -- sItemEventAddTable (B2 + 0x40)
+           event_list = 0x021DB1D4,                             -- lista de efectos registrados (B2 0x021DB194 + 0x40)
+           event_pool = 0x021DB1E0 },                           -- huecos libres de esa lista (B2 0x021DB1A0 + 0x40)
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
 
@@ -221,6 +224,93 @@ local function script_unhook()
   end
 end
 
+-- Objeto en combate. El juego solo activa los efectos de un objeto (Restos, bayas...) al entrar el Pokémon al campo o
+-- al cambiarlo con un movimiento (ServerControl_ChangeHeldItem): quita sus entradas de la lista de efectos y registra
+-- las del nuevo. Aquí se hace lo mismo desde fuera, entre frames (src/ov167/battle_event.c e item_handlers.c en pokebw2).
+-- Entrada (0x3C bytes): +0 prev, +4 next, +8 tabla de efectos, +0x10 tipo (5 = objeto), +0x14 prioridad,
+-- +0x18 bits (profundidad:16, nº de efectos:8, running bit 24, removeReserved bit 27, active bit 29), +0x1C work[7]
+-- (work[6] = objeto temporal), +0x38 objeto, +0x3A pokeID, +0x3B pokeID del que depende.
+local EV_SIZE, EV_POOL_MAX = 0x3C, 0x84
+local function r32(a) return memory.read_u32_le(off(a), DOMAIN) end
+local function w32(a, v) memory.write_u32_le(off(a), v, DOMAIN) end
+
+local function event_free(game, item)
+  local list = game.event_list
+  local prev, nxt = r32(item), r32(item + 4)
+  if r32(list + 4) == item then w32(list + 4, nxt) end
+  if prev ~= 0 then w32(prev + 4, nxt) end
+  if nxt ~= 0 then w32(nxt, prev) end
+  memory.write_bytes_as_array(off(item), from_hex(string.rep("00", EV_SIZE)), DOMAIN)
+  local count = r32(list + 8)
+  if count > 0 then
+    count = count - 1
+    w32(list + 8, count)
+    w32(game.event_pool + 4 * count, item)
+  end
+end
+
+local function set_battle_item(game, mon, item)
+  local list = game.event_list
+  if r32(list) ~= 0 then return false, "I: el juego está ejecutando efectos; reintenta" end
+  local mon_id = memory.read_u8(off(mon + 0x19), DOMAIN)
+  -- quitar los efectos del objeto anterior (no los temporales)
+  local e = r32(list + 4)
+  while e ~= 0 do
+    local nxt = r32(e + 4)
+    local bits = r32(e + 0x18)
+    if r32(e + 0x10) == 5 and memory.read_u8(off(e + 0x3A), DOMAIN) == mon_id and (bits >> 27) & 1 == 0
+       and r32(e + 0x1C + 24) == 0 and (bits >> 29) & 1 == 1 then
+      if (bits >> 24) & 1 == 1 then w32(e + 0x18, bits | (1 << 27)) else event_free(game, e) end
+    end
+    e = nxt
+  end
+  memory.write_u16_le(off(mon + 0x12), item, DOMAIN)
+  if item == 0 then return true, "I sin objeto" end
+  -- buscar el objeto en la tabla del juego: {u32 objeto, función}; la función es "movs r1,#n; str r1,[r0];
+  -- ldr r0,=tabla; bx lr" (las 171 iguales), así que n y la tabla se leen de su código
+  local handlers, num
+  for i = 0, 0xB0 do
+    local entry = game.item_table + 8 * i
+    local fn = r32(entry + 4) & ~1
+    if fn == 0 then break end
+    if r32(entry) == item then
+      local h0 = memory.read_u16_le(off(fn), DOMAIN)
+      if h0 & 0xFF00 ~= 0x2100 or memory.read_u16_le(off(fn + 4), DOMAIN) ~= 0x4800 then
+        return false, "I: código inesperado en la tabla de objetos"
+      end
+      num, handlers = h0 & 0xFF, r32(fn + 8)
+      break
+    end
+  end
+  if handlers == nil then return true, "I objeto sin efecto en combate" end
+  local count = r32(list + 8)
+  if count >= EV_POOL_MAX then return false, "I: lista de efectos llena" end
+  local new = r32(game.event_pool + 4 * count)
+  w32(list + 8, count + 1)
+  local priority = (1 << 24) | memory.read_u16_le(off(mon + 0xF6), DOMAIN)   -- (7 - 6) << 24 | velocidad
+  memory.write_bytes_as_array(off(new), from_hex(string.rep("00", EV_SIZE)), DOMAIN)
+  w32(new + 8, handlers)
+  w32(new + 0x10, 5)
+  w32(new + 0x14, priority)
+  w32(new + 0x18, (num << 16) | (1 << 29))
+  memory.write_u16_le(off(new + 0x38), item, DOMAIN)
+  memory.write_u8(off(new + 0x3A), mon_id, DOMAIN)
+  memory.write_u8(off(new + 0x3B), mon_id, DOMAIN)
+  -- insertar por prioridad (mayor primero; con empate, detrás de los que ya estaban)
+  local first = r32(list + 4)
+  if first == 0 then
+    w32(list + 4, new)
+  elseif priority > r32(first + 0x14) then
+    w32(first, new); w32(new + 4, first); w32(list + 4, new)
+  else
+    local prev, cur = first, r32(first + 4)
+    while cur ~= 0 and priority <= r32(cur + 0x14) do prev, cur = cur, r32(cur + 4) end
+    w32(new, prev); w32(new + 4, cur); w32(prev + 4, new)
+    if cur ~= 0 then w32(cur, new) end
+  end
+  return true, string.format("I objeto %d (%d efectos)", item, num)
+end
+
 local function run(cmd)
   local op, a, b, c = cmd:match("^(%S+)%s*(%S*)%s*(%S*)%s*(%S*)")
   if op == "W" then
@@ -268,6 +358,10 @@ local function run(cmd)
     pending_script, script_stage = from_hex(a), "armado"
     script_status = string.format("esperando (%d bytes): se ejecuta con el personaje libre", #pending_script)
     return true, "S pendiente"
+  elseif op == "I" then                         -- objeto en combate: I <copia real> <objeto>
+    local game = GAMES[game_id()]
+    if game == nil or game.event_list == nil then return false, "I: faltan direcciones para este juego" end
+    return set_battle_item(game, tonumber(a), tonumber(b))
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
     if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end

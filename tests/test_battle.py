@@ -111,3 +111,14 @@ for bad in [lambda: battle.set_weather_command("fog"), lambda: battle.set_weathe
     except ValueError:
         pass
 print("ok clima del combate")
+
+# objeto en combate: el Lua (I) cambia la copia real y sus efectos; la visual con guarda
+b = battle.parse(f"T:00,e0:0225befc:{battler()}:-,E0:0225cdf8:{battler()}:-")
+assert b["enemy"][0]["item"] == 0, b
+assert battle.set_item_command("enemy", 0, 234) == "I 0x225cdf8 234;G 0x225bf0e 0000 ea00"
+for bad in [lambda: battle.set_item_command("enemy", 0, 9999), lambda: battle.set_item_command("enemy", 1, 1)]:
+    try:
+        bad(); raise SystemExit("debía fallar")
+    except ValueError:
+        pass
+print("ok objeto en combate")

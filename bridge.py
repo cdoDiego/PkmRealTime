@@ -39,7 +39,8 @@ import pk5
 When = Literal["en_mapa", "en_combate", "cualquiera"]
 WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"},
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
-BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather"}   # siempre esperan al combate
+BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather",
+                 "battle_set_item"}   # siempre esperan al combate
 FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport"}   # esperan al mapa (personaje libre)
 
 
@@ -48,7 +49,7 @@ class EventIn(BaseModel):
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "give_money", "take_money", "set_money",
+                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
@@ -56,7 +57,7 @@ class EventIn(BaseModel):
     hp: Optional[int] = None
     status: Optional[str] = None
     turns: Optional[int] = None      # sleep: turnos sin atacar (1-6, por defecto 3); battle_set_weather: turnos (sin turns = sin fin)
-    item: Optional[int] = None       # set_item: nº de objeto (0 = quitar)
+    item: Optional[int] = None       # set_item / battle_set_item: nº de objeto (0 = quitar)
     move: Optional[int] = None       # set_move: nº de movimiento
     move_slot: Optional[int] = None  # set_move: hueco 0-3
     qty: Optional[int] = None        # give_item / take_item (sin qty = todas); give/take/set_money: cantidad
@@ -171,6 +172,8 @@ def build_commands(ev: Event) -> str:
             return cmds + (";" + battle.show_hp_command(side, slot) if d.get("show", True) else "")
         if d["type"] == "battle_set_stage":
             return "SAVE;" + battle.set_stage_command(side, slot, str(need(d, "stat")), d["stage"], d["delta"])
+        if d["type"] == "battle_set_item":
+            return "SAVE;" + battle.set_item_command(side, slot, int(need(d, "item")))
         if d["type"] == "battle_set_pp":
             return "SAVE;" + battle.set_pp_command(side, slot, int(need(d, "move_slot")), d["pp"])
         cmds = "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")), d.get("turns"))
@@ -264,6 +267,13 @@ def need(d: dict, key: str):
     return d[key]
 
 
+def battle_ready(d: dict) -> bool:
+    if d["type"] == "battle_set_weather":
+        return True
+    side = d["target"].get("side", "enemy")
+    return (side, 0, "real") in battle.RAW and (side, 0, "visual") in battle.RAW
+
+
 def next_commands() -> str:
     global in_flight
     if in_flight is not None or game["party_addr"] == 0:
@@ -275,6 +285,8 @@ def next_commands() -> str:
             when = "cualquiera_incluso_menu"
         if game["mode"] not in WHEN_TO_MODES[when] and ev.data["type"] != "rollback":
             continue
+        if ev.data["type"] in BATTLE_EVENTS and not battle_ready(ev.data):
+            continue    # el combate acaba de empezar y aún no están los combatientes: esperar, no fallar
         queue.remove(eid)
         try:
             cmds = build_commands(ev)
@@ -410,6 +422,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                 addr, _, rest = rest.partition(" ")
                 hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc = (rest.split(" ") + ["-"] * 7)[:7]
                 update_game(gamefield)
+                if mode != "battle":
+                    battle.RAW.clear()   # sin datos viejos: el siguiente combate espera a tener los suyos
                 try:
                     game["battle"] = battle.parse(battlefield) if mode == "battle" else None
                 except (ValueError, IndexError, struct.error) as e:   # datos raros: se informan, no tumban el puente

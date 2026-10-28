@@ -8,7 +8,7 @@ Cada tabla: 6 punteros del jugador + contador, y desde +0x1C los del rival + con
 Cada uno apunta a una estructura de combatiente, sin cifrar:
   +0x00 puntero al Pokémon (PK5 cifrado, 220 bytes)   +0x04 puntero de Ilusión
   +0x0C especie (u16)   +0x16 habilidad   +0x19 identificador en combate (pokeID)
-  +0x0E HP máximo (u16)   +0x10 HP actual (u16)   +0x18 nivel (u8)   +0x20 estado (u32)
+  +0x0E HP máximo (u16)   +0x10 HP actual (u16)   +0x12 objeto (u16)   +0x18 nivel (u8)   +0x20 estado (u32)
   +0xEE Atq, Def, AtE, DfE, Vel (u16)   +0xFC cambios de estadísticas (7 bytes, 6 = sin cambio)
   +0x104 movimientos: 4 × 14 bytes (u16 movimiento, u8 PP, ...)
 """
@@ -18,7 +18,7 @@ import battle_cmd
 import gamedata
 import pk5
 
-OFF_MAX_HP, OFF_HP, OFF_LEVEL, OFF_STATUS = 0x0E, 0x10, 0x18, 0x20
+OFF_MAX_HP, OFF_HP, OFF_ITEM, OFF_LEVEL, OFF_STATUS = 0x0E, 0x10, 0x12, 0x18, 0x20
 OFF_STATS, OFF_STAGES, OFF_MOVES, MOVE_STRIDE = 0xEE, 0xFC, 0x104, 14
 
 # Cambios de estadísticas: 7 bytes desde +0xFC, 6 = sin cambio (rango 0-12 → -6..+6).
@@ -105,7 +105,7 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
     names = gamedata.DATA.get("moves", [])
     info = {
         "index": idx, "addr": f"{addr:#010x}", "poke_id": raw[0x19],
-        "hp": u16(OFF_HP), "max_hp": u16(OFF_MAX_HP), "level": raw[OFF_LEVEL],
+        "hp": u16(OFF_HP), "max_hp": u16(OFF_MAX_HP), "level": raw[OFF_LEVEL], "item": u16(OFF_ITEM),
         "status_raw": struct.unpack_from("<I", raw, OFF_STATUS)[0],
         "conditions": status_names(raw),
         "stats": dict(zip(("atk", "def", "spa", "spd", "spe"), struct.unpack_from("<5H", raw, OFF_STATS))),
@@ -270,3 +270,16 @@ def set_hp_command(side: str, index: int, hp: int) -> str:
             new = 1
         cmds.append(f"G {addr + OFF_HP:#x} {raw[OFF_HP:OFF_HP + 2].hex()} {struct.pack('<H', new).hex()}")
     return ";".join(cmds)
+
+
+MAX_ITEM = 638
+
+
+def set_item_command(side: str, index: int, item: int) -> str:
+    """Objeto en combate (0 = quitar). La copia real la cambia el Lua (I), que además quita los efectos del objeto
+    anterior y registra los del nuevo en la lista del juego, como hace un movimiento como Truco; la visual, con G."""
+    if not 0 <= item <= MAX_ITEM:
+        raise ValueError(f"objeto fuera de rango (0-{MAX_ITEM})")
+    (real, _), (addr, raw) = _both(side, index)
+    return (f"I {real:#x} {item};"
+            f"G {addr + OFF_ITEM:#x} {raw[OFF_ITEM:OFF_ITEM + 2].hex()} {struct.pack('<H', item).hex()}")

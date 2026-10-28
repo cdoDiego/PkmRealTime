@@ -86,6 +86,8 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | `FieldScript_AttachOpcodeGuard` | `0x02153DC8` | código | Se llama al crear la máquina de un guion (`r0` = VM, `pc` en `+0x20`) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 | Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 granizo, 4 arena) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
 | `ServerControl_CheckFainted` | `0x021A8A64` | código | Decide si un combatiente se debilita (`r1` = copia real) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
+| `sItemEventAddTable` | `0x021D8F68` | 171 × {u32 objeto, función} | Objetos con efecto en combate; cada función es `movs r1,#n; str r1,[r0]; ldr r0,=tabla; bx lr` (nº de efectos y su tabla) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ usado 28-oct |
+| Lista de efectos del combate | `0x021DB1D4` (+ huecos libres en `0x021DB1E0`) | u32 profundidad, primera entrada, nº en uso | Efectos registrados (habilidades, objetos...), por prioridad. Entradas de `0x3C` bytes | pokebw2 `battle_event.c` (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 28-oct |
 
 Leyenda: ✅ validado en el juego · 🟡 encontrado, falta confirmar algo · ⚪ pendiente.
 
@@ -268,6 +270,23 @@ de elegir acción. showdown-bw2 muestra que se puede: pausar la lógica (`server
 la elección real. Es factible pero frágil (el menú se cierra y reabre, y pausar/reanudar la lógica puede trabar el combate).
 Decisión (27-oct): no por ahora; alternativa barata si hiciera falta, un aviso dibujado por el Lua mientras el evento espera.
 
+### Objeto en combate
+
+**Problema:** el objeto de un combatiente está en `+0x12` (`heldItem`; `+0x14` es el objeto ya consumido), pero cambiarlo ahí no
+basta. Los efectos de los objetos (Restos, bayas...) son entradas en una lista de efectos del combate, y el juego solo las registra
+cuando el Pokémon entra al campo o cuando un movimiento cambia el objeto (`ServerControl_ChangeHeldItem`: `ItemEvent_RemoveItem`,
+`SetItem`, `ItemEvent_AddItem`; `src/ov167/item_handlers.c` y `battle_event.c` en pokebw2).
+
+**Solución (orden `I <copia real> <objeto>` del Lua):** hace lo mismo desde fuera, entre frames, solo si la profundidad de la lista
+es 0 (el juego no está ejecutando efectos):
+1. quita las entradas de tipo 5 (objeto) de ese pokeID que no sean temporales (`work[6]` = 0): las desengancha y devuelve el hueco;
+2. escribe el objeto en `+0x12` de la copia real (Python escribe la visual con `G`);
+3. busca el objeto en `sItemEventAddTable`, lee de su función el nº de efectos y la tabla, y añade una entrada con prioridad
+   `(1 << 24) | velocidad`, insertada en orden (mayor primero) como `BattleEvent_AddItem`.
+
+Comprobado con el volcado `combate2`: el Pikachu con Restos tenía registrada exactamente la entrada que genera el Lua (2 efectos,
+tabla `0x021D87B0`, prioridad `0x01000024`). Un objeto sin efecto en combate (p. ej. Pepita) solo se escribe en `+0x12`.
+
 ### Combates forzados y clima del mapa (guiones propios)
 
 **Cómo:** el mapa revisa cada frame, con el personaje libre, si hay un "guion reservado" (`FieldStatus.reservedScript`, u16 en
@@ -382,6 +401,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
 | | `J <hex>` inyecta comandos de pantalla en el siguiente turno del combate |
 | | `F <dir>` debilita a ese combatiente cuando el juego lo revise (vida 0) |
+| | `I <dir> <objeto>` objeto de un combatiente (copia real), con sus efectos registrados en el juego |
 | | `R <dir> <n>` lee bytes (herramienta de investigación) |
 | | `S <hex>` ejecuta un guion propio en cuanto el personaje quede libre (combates forzados, clima del mapa) |
 | | `SAVE` / `LOAD` savestate de seguridad (ranura 9) |
@@ -519,6 +539,7 @@ Eventos disponibles:
 {"type": "battle_set_status", "target": {"side": "enemy", "slot": 0}, "status": "burn"}
 {"type": "battle_set_stage", "target": {"side": "player", "slot": 0}, "stat": "atk", "delta": 2}   // o "stage": valor final
 {"type": "battle_set_pp", "target": {"side": "enemy", "slot": 0}, "move_slot": 0, "pp": 0}       // sin pp = al máximo
+{"type": "battle_set_item", "target": {"side": "enemy", "slot": 0}, "item": 234}                  // 0 = quitar
 {"type": "give_pokemon", "species": 495, "level": 10, "shiny": true, "gender": "hembra",
  "item": 234, "moves": [33, 43, 22], "nature": 3, "hidden_ability": false}
 ```
@@ -543,6 +564,9 @@ Eventos disponibles:
   (daño 1/16, 2/16, 3/16… del máximo). `/state` los muestra como `sleep (quedan n turnos)` y `toxic (turno n)`.
 - `battle_set_stage` (experimental): cambia una estadística en combate (`atk`, `def`, `spa`, `spd`, `spe`, `acc`, `eva`).
   `stage` fija el valor final (−6..+6); `delta` suma o resta niveles. En pantalla no se ve (Gen 5 no lo muestra).
+- `battle_set_item` (experimental): objeto del combatiente (`item`, 0 = quitar). Sus efectos funcionan desde ese momento, como si
+  lo hubiera cambiado un movimiento. `/state` muestra `item` de cada combatiente. Si llega justo al empezar el combate, espera a
+  que estén los combatientes.
 - `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
   Los PP sí se ven al momento en el menú de Luchar. Si el rival ya había elegido ese movimiento para el turno, lo intenta
   igual y sale el mensaje de que no le quedan PP (sin efecto), como en el juego normal.
@@ -619,6 +643,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Climas del mapa 1-13 identificados; en combate 3 = granizo y 4 = arena (corregido). Perder un combate forzado colgaba el juego: el guion ahora comprueba la victoria y llama a la derrota como los del juego. Validado con un entrenador doble. |
 | 27-oct | Teletransporte (`0x028A` volar a una zona; tabla de destinos de Vuelo) y regalo al equipo con la orden del juego (`0x010E`, con caída a la caja `0x0123`) validados. El parámetro sin nombre de `BoxPkmCreateParams` (`param1C`) es el variocolor. |
 | 27-oct | Combate salvaje con opciones (forma, variocolor `0x02`, sexo, oculta, sin huida) validado. Objetos en combate: la mochila es la misma, el Lua la manda también en combate. `/state` muestra variocolor, sexo, forma y habilidad. |
+| 28-oct | Derrota en combate salvaje forzado validada (al Centro Pokémon, sin error). Objetos en combate validados con el Lua recargado. |
+| 28-oct | Objeto en combate (`battle_set_item`, orden `I` del Lua): además de `+0x12`, registra sus efectos en la lista del combate como hace Truco. Validado (quitar Restos, dar Baya Zidra). Los eventos de combate esperan a que existan los combatientes y los datos del combate anterior se borran al salir. |
 
 ---
 
@@ -672,6 +698,8 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] Estado en combate: descifrado (lista de condiciones desde `+0x1C`) y quemadura escrita al rival: hace daño al final del turno.
 - [x] `battle_set_stage`: con Ataque +2 y Defensa del rival −2, el mismo golpe (desde el mismo savestate) pasó de quitar menos de media vida a debilitarlo.
 - [x] `battle_set_pp`: PP al máximo se ve al instante en el menú de Luchar (33/35 → 35/35). Con un movimiento del rival a 0 PP no lo usó; sin PP en ninguno, usó Forcejeo.
+- [x] `battle_set_item`: quitar los Restos a un Snorlax salvaje (los traía de serie): ya no se curó al final del turno. Darle una
+  Baya Zidra con la vida justo encima de la mitad: tras el golpe se la comió y se curó.
 - [x] Barra de vida e ícono de estado actualizados con los gráficos del juego (inyección en la cola del cliente).
 - [x] Evento enviado **durante** las animaciones de un turno: con Leer en marcha, la barra del rival bajó a mitad del ataque, sin esperar al turno siguiente.
 - [x] Subir la vida (curar en combate): la barra sube animada.
@@ -709,12 +737,13 @@ o si la memoria cambió entre la lectura y la escritura.
   juego no hace la derrota solo (`EventBattleCall`, `unk14`): el guion debe preguntar si ganó y llamar a la derrota, como los
   del juego. Corregido (`0x8D`/`0x177` ¿ganó?, `0x19` comparar, `0x1F` saltar, `0x8C`/`0x176` derrota): al perder, fundido a
   negro, Centro Pokémon con el equipo curado y ₽240 menos.
-- [ ] Perder un combate salvaje forzado (mismo mecanismo, no probado).
+- [x] Perder un combate salvaje forzado: Gyarados nivel 40 sin huida contra el equipo a 1 de vida; tras caer el último, al Centro Pokémon sin error.
 - [x] `teleport` a `aspertia`: fundido a negro y apareció frente a la casa del protagonista; todo normal.
 - [x] `teleport` con `x`/`z`: zona 435, casilla 7,12 (Centro Pokémon de Engobe, de `RESPAWN_ZONE_INFO`): frente al mostrador.
 - [x] `start_wild_battle` con opciones: Eevee variocolor, hembra, Anticipación (oculta) y sin poder huir. Con `0x10` no salió
   variocolor: el variocolor es `0x02`. Tras debilitarse tu Pokémon sí se puede huir desde la pregunta de cambio (normal).
 - [x] Master Ball dada durante el combate (escrita en la mochila) y captura correcta; el Eevee llegó a la caja con sus datos.
+- [x] `give_item` con `"when": "en_combate"` tras recargar el Lua (sin herramientas de depuración): 3 Pociones visibles en la mochila del combate.
 - [x] `give_pokemon` al equipo: Pikachu nivel 10 variocolor (el `param1C` sin nombre es el variocolor: 1 = sí) y hembra, entrenador
   Diego, conocido en Pueblo Floccesy. Con el equipo lleno, un Eevee fue al hueco 3 de la caja 1.
 

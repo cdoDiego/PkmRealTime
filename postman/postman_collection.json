@@ -3343,6 +3343,54 @@
             },
             "description": "Sale el mensaje de fin del clima que hubiera."
           }
+        },
+        {
+          "name": "Dar Restos al rival (battle_set_item)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"battle_set_item\",\n  \"target\": {\n    \"side\": \"enemy\",\n    \"slot\": 0\n  },\n  \"item\": 234\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Objeto del combatiente (0 = quitar). Sus efectos funcionan al momento (234 Restos, 158 Baya Zidra)."
+          }
         }
       ]
     },
