@@ -30,6 +30,7 @@ import bag
 import battle
 import battle_cmd
 import config
+import field_script
 import gamedata
 import gift
 import pk5
@@ -38,7 +39,8 @@ import pk5
 When = Literal["en_mapa", "en_combate", "cualquiera"]
 WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"},
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
-BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp"}   # siempre esperan al combate, aunque no se indique "when"
+BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather"}
+FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather"}   # esperan al mapa (personaje libre)   # siempre esperan al combate, aunque no se indique "when"
 
 
 class EventIn(BaseModel):
@@ -46,12 +48,13 @@ class EventIn(BaseModel):
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "debug_peek", "debug_poke", "debug_inject", "rollback"]
+                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "start_wild_battle", "start_trainer_battle", "set_weather",
+                  "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
     hp: Optional[int] = None
     status: Optional[str] = None
-    turns: Optional[int] = None      # battle_set_status con sleep: turnos sin atacar (1-6, por defecto 3)
+    turns: Optional[int] = None      # sleep: turnos sin atacar (1-6, por defecto 3); battle_set_weather: turnos (sin turns = sin fin)
     item: Optional[int] = None       # set_item: nº de objeto (0 = quitar)
     move: Optional[int] = None       # set_move: nº de movimiento
     move_slot: Optional[int] = None  # set_move: hueco 0-3
@@ -73,6 +76,9 @@ class EventIn(BaseModel):
     expect: Optional[str] = None     # debug_poke: bytes que debe haber antes (opcional, como guarda)
     commands: Optional[list] = None  # debug_inject: [["UPDATE_HP_GAUGE", 12], ["SET_GAUGE_STATUS", 12, 1]]
     show: bool = True                # battle_set_hp / battle_set_status: actualizar también la pantalla
+    trainer: Optional[int] = None    # start_trainer_battle: nº de entrenador (de la ROM)
+    weather: Optional[str] = None    # set_weather: rain, snow, sandstorm... o número; battle_set_weather: none, sun, rain, sandstorm, hail
+    persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
 
 
 @dataclass
@@ -88,6 +94,7 @@ class Event:
 _ids = itertools.count(1)
 events: dict[int, Event] = {}
 queue: list[int] = []
+persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "connected": False, "updated": 0.0}
 NEEDS_DATA = {"heal", "set_move", "give_pokemon"}   # usan datos de la ROM (PP, especies, movimientos)
@@ -123,9 +130,24 @@ def build_commands(ev: Event) -> str:
         if d["expect"]:
             return f"SAVE;G {addr:#x} {bytes.fromhex(d['expect']).hex()} {data}"
         return f"SAVE;W {addr:#x} {data}"
+    if d["type"] in FIELD_SCRIPT_EVENTS:   # guiones propios: el juego los ejecuta con el personaje libre en el mapa
+        if game["mode"] == "battle":
+            raise ValueError("no se puede durante un combate")
+        if d["type"] == "start_wild_battle":
+            return "SAVE;S " + field_script.wild_battle(int(need(d, "species")), int(d["level"] or 5))
+        if d["type"] == "start_trainer_battle":
+            return "SAVE;S " + field_script.trainer_battle(int(need(d, "trainer")))
+        global persistent_weather
+        w = str(need(d, "weather"))
+        cmds = "SAVE;S " + field_script.field_weather(int(w) if w.isdigit() else w)
+        if d.get("persist") or w == "zone":
+            persistent_weather = None if w == "zone" else w
+        return cmds
     if d["type"] in BATTLE_EVENTS:   # fase 5 (experimental): escribe en las dos copias del combatiente
         if game["mode"] != "battle":
             raise ValueError("no hay combate en curso")
+        if d["type"] == "battle_set_weather":
+            return "SAVE;" + battle.set_weather_command(str(need(d, "weather")), d.get("turns"))
         side = d["target"].get("side", "enemy")
         if side not in ("player", "enemy"):
             raise ValueError("side debe ser 'player' o 'enemy'")
@@ -294,7 +316,7 @@ def prepare_data() -> None:
     import rom
     r = rom.Rom(path)
     info = gamedata.rom_info()
-    if info.get("code") == r.code and info.get("header_crc") == r.header_crc:
+    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "trainers" in gamedata.DATA:
         print(f"Datos del juego: {r.title} {r.code} (al día)")
         return
     print(f"Generando datos del juego desde {r.title} {r.code}...")
@@ -348,6 +370,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     game["battle"] = battle.parse(battlefield) if mode == "battle" else None
                 except (ValueError, IndexError, struct.error) as e:   # datos raros: se informan, no tumban el puente
                     game["battle"] = {"error": str(e)}
+                if game["mode"] == "battle" and mode != "battle" and persistent_weather:   # el mapa vuelve con su clima
+                    add_event(EventIn(type="set_weather", weather=persistent_weather), "clima persistente")
                 game["mode"], game["updated"] = mode, time.time()
                 game["party_addr"] = int(addr, 16) if addr else 0   # el puntero puede moverse
                 if mode != "battle":   # en combate el bloque del equipo puede no estar al día
@@ -382,11 +406,15 @@ def auth(token: Optional[str]) -> str:
 
 @app.post("/events")
 async def post_event(ev: EventIn, x_token: Optional[str] = Header(None)):
-    source = auth(x_token)
+    e = add_event(ev, auth(x_token))
+    return {"id": e.id, "state": e.state}
+
+
+def add_event(ev: EventIn, source: str) -> Event:
     e = Event(id=next(_ids), data=ev.model_dump(), source=source)
     events[e.id] = e
     queue.append(e.id)
-    return {"id": e.id, "state": e.state}
+    return e
 
 
 @app.get("/events")

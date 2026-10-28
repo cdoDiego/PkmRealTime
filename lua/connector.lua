@@ -29,7 +29,10 @@ local BATTLER_SIZE = 0x140            -- bytes que se envían de cada combatient
 local GAMES = {
   IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu = 0x0223B2F5,
            adapters = 0x021DD8AC, client_proc = 0x021B1A15,     -- combate: sAdapters y función del cliente (B2 + 0x40)
-           check_fainted = 0x021A8A64 },                        -- ServerControl_CheckFainted (B2 + 0x40)
+           check_fainted = 0x021A8A64,                          -- ServerControl_CheckFainted (B2 + 0x40)
+           reserve_get = 0x0201936C,                            -- FieldStatus_GetReserveScript (B2 + 0x2C)
+           script_vm = 0x02153DC8,                              -- FieldScript_AttachOpcodeGuard (B2 + 0x40)
+           battle_field = 0x021DD928 },                         -- sField: clima del combate (B2 + 0x40)
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
 
@@ -83,7 +86,7 @@ end
 
 -- En combate: cada combatiente en sus dos copias (estructura de batalla y su Pokémon cifrado).
 -- Formato: "T:<tabla>,p0:<dir>:<estructura>:<pk5>,e0:...". p/e = copia visual; P/E = copia real.
-local function battle_hex(ptr_abs)
+local function battle_hex(ptr_abs, game)
   local size = memory.getmemorydomainsize(DOMAIN)
   local tbl = ptr_abs + BATTLE_TABLE_PTR_OFF
   local srv = ptr_abs + BATTLE_SERVER_PTR_OFF
@@ -98,6 +101,7 @@ local function battle_hex(ptr_abs)
       end
     end
   end
+  if game.battle_field then parts[#parts + 1] = "W:" .. read_hex(game.battle_field, 8) end   -- clima, turnos
   return table.concat(parts, ",")
 end
 
@@ -180,6 +184,41 @@ local function faint_unhook()
   if faint_hook then event.unregisterbyname("connector_faint"); faint_hook = false end
 end
 
+-- Guion propio (combate salvaje, contra entrenador, clima...): el juego ejecuta el "guion reservado" de FieldStatus
+-- (+0x12) en cuanto el personaje queda libre en el mapa. Al leerlo (FieldStatus_GetReserveScript, r0 = FieldStatus)
+-- se pone RESERVE_ID; al crear su máquina de guiones (FieldScript_AttachOpcodeGuard, r0 = VM, pc en +0x20) se escriben
+-- nuestros bytes encima del guion cargado. El juego hace el resto (transición, música, vuelta al mapa).
+local RESERVE_ID = 2000           -- guion global 2000 (archivo SCRIPTS_GLOBAL_2000); solo se usa su espacio
+local pending_script = nil        -- bytes del guion
+local script_stage = ""           -- "armado" -> "reservado" -> "" (hecho)
+local script_status = ""
+local script_hooks = false
+
+local function on_reserve_get()
+  if script_stage ~= "armado" then return end
+  local status = emu.getregisters()["ARM9 r0"]
+  if status == nil or status < BASE or status >= BASE + 0x400000 then return end
+  memory.write_u16_le(off(status + 0x12), RESERVE_ID, DOMAIN)
+  script_stage = "reservado"
+end
+
+local function on_script_vm()
+  if script_stage ~= "reservado" then return end
+  local vm = emu.getregisters()["ARM9 r0"]
+  local pc = vm and memory.read_u32_le(off(vm + 0x20), DOMAIN)
+  if pc == nil or pc < BASE or pc >= BASE + 0x400000 then return end
+  memory.write_bytes_as_array(off(pc), pending_script, DOMAIN)
+  pending_script, script_stage = nil, ""
+  script_status = string.format("ejecutado (%08X)", pc)
+end
+
+local function script_unhook()
+  if script_hooks then
+    event.unregisterbyname("connector_reserve"); event.unregisterbyname("connector_script")
+    script_hooks = false
+  end
+end
+
 local function run(cmd)
   local op, a, b, c = cmd:match("^(%S+)%s*(%S*)%s*(%S*)%s*(%S*)")
   if op == "W" then
@@ -211,6 +250,22 @@ local function run(cmd)
     pending_faint[tonumber(a)] = true
     faint_status = string.format("pendiente %s: se debilita al revisarlo el juego", a)
     return true, "F pendiente"
+  elseif op == "S" then                         -- ejecutar un guion propio en cuanto el personaje quede libre
+    local game = GAMES[game_id()]
+    if game == nil or game.reserve_get == nil then return false, "S: falta reserve_get para este juego" end
+    if pending_script ~= nil then return false, "S: ya hay un guion esperando" end
+    if not script_hooks then
+      local ok1, e1 = pcall(event.on_bus_exec, on_reserve_get, game.reserve_get, "connector_reserve")
+      local ok2, e2 = pcall(event.on_bus_exec, on_script_vm, game.script_vm, "connector_script")
+      if not (ok1 and ok2) then
+        script_hooks = true; script_unhook()
+        return false, "S: este núcleo no admite avisos de ejecución: " .. tostring(e1 or e2)
+      end
+      script_hooks = true
+    end
+    pending_script, script_stage = from_hex(a), "armado"
+    script_status = string.format("esperando (%d bytes): se ejecuta con el personaje libre", #pending_script)
+    return true, "S pendiente"
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
     if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end
@@ -248,7 +303,7 @@ local function handle(reply)
   comm.socketServerSend("RES " .. (ok_all and "ok" or "fail") .. " " .. table.concat(details, ","))
 end
 
-event.onexit(faint_unhook)
+event.onexit(function() faint_unhook(); script_unhook() end)
 comm.socketServerSetTimeout(50)
 console.log("connector.lua listo; conectado: " .. tostring(comm.socketServerIsConnected()))
 
@@ -268,7 +323,7 @@ while true do
       box = read_hex(ptr + BOX1_PTR_OFF, BOX1_SIZE)
       trainer = read_hex(ptr + TRAINER_PTR_OFF, TRAINER_SIZE)
     elseif addr ~= nil and mode == "battle" then
-      battle = battle_hex(addr - PARTY_PTR_OFF)
+      battle = battle_hex(addr - PARTY_PTR_OFF, game)
     end
     if mode ~= "battle" and pending_inject ~= nil then   -- el combate terminó: lo pendiente ya no aplica
       pending_inject = nil
@@ -279,6 +334,7 @@ while true do
       faint_status = "descartado (terminó el combate)"
     end
     if faint_hook and faint_count() == 0 then faint_unhook() end   -- fuera del aviso, no desde dentro
+    if script_hooks and pending_script == nil then script_unhook() end
     comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s", mode, addr or 0, party, bag, box, trainer,
                                         code:gsub("[^%w]", "_"), crc, battle))
     handle(comm.socketServerResponse())
@@ -291,5 +347,6 @@ while true do
   end
   if inject_status ~= "" then gui.text(4, 36, "inyección: " .. inject_status) end
   if faint_status ~= "" then gui.text(4, 52, "debilitar: " .. faint_status) end
+  if script_status ~= "" then gui.text(4, 68, "guion: " .. script_status) end
   emu.frameadvance()
 end

@@ -14,7 +14,8 @@ Una app externa (un bot de chat, Postman, curl…) envía eventos como "quema a 
 | Equipo | Cambiar HP y estado, curar, objeto equipado, movimientos | ✅ validado en el juego |
 | Mochila | Dar y quitar objetos | ✅ validado en el juego |
 | Regalos | Crear un Pokémon nuevo en la caja 1 (nivel, variocolor, género, objeto, movimientos, habilidad oculta) | ✅ validado en el juego |
-| Combate | Vida, estado, estadísticas y PP de cualquier combatiente (tuyo o rival); la barra y el ícono se animan con los gráficos del juego | 🧪 experimental, validado en el juego |
+| Combate | Vida (también debilitar), los 7 estados, estadísticas, PP y clima de cualquier combatiente, tuyo o rival, en el campo o en el banco; individual, doble y contra entrenador. Todo se anima con los gráficos del juego | 🧪 experimental, validado en el juego |
+| Mapa | Forzar un combate salvaje contra cualquier Pokémon y nivel, o contra cualquier entrenador, en cualquier sitio; cambiar el clima | 🧪 experimental, validado en el juego |
 | Seguridad | Solo escribe con el personaje caminando libre (no en menús ni diálogos), comprueba que la memoria no cambió antes de escribir, y `POST /rollback` deshace el último evento | ✅ |
 
 Funciona con **ROM aleatorizadas (randomizer)**: los datos de especies, movimientos y PP se leen de la ROM de cada persona.

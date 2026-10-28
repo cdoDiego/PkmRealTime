@@ -18,10 +18,12 @@ PERSONAL = "a/0/1/6"     # datos de cada especie (0x4C bytes)
 LEARNSET = "a/0/1/8"     # movimientos por nivel
 MOVES = "a/0/2/1"        # datos de cada movimiento
 TEXT = "a/0/0/2"         # textos del juego
+TRDATA = "a/0/9/1"       # entrenadores: tipo de datos, clase, tipo de combate, nº de Pokémon...
 TEXT_SPECIES = 90        # archivo de texto con los nombres de especie (B2/W2)
 TEXT_ABILITIES = 374
 TEXT_MOVES = 403
 TEXT_ITEMS = 64
+TEXT_TRAINER_CLASSES = 383
 
 # Curvas de experiencia: fórmulas oficiales (iguales en todas las ROM; el randomizer solo cambia qué curva usa cada especie)
 def _exp_curve(growth: int, n: int) -> int:
@@ -174,6 +176,9 @@ def build_data(rom: Rom) -> dict:
         "abilities": rom.text(TEXT_ABILITIES)[:165],
         "moves": rom.text(TEXT_MOVES)[:560],
         "items": rom.text(TEXT_ITEMS)[:639],
+        # cada entrenador: [clase, tipo de combate (0 individual, 1 doble, 2 triple, 3 rotatorio), nº de Pokémon]
+        "trainers": [[d[1], d[2], d[3]] if len(d) >= 4 else [0, 0, 0] for d in rom.narc(TRDATA)],
+        "trainer_classes": rom.text(TEXT_TRAINER_CLASSES),
     }
 
 

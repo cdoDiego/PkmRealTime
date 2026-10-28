@@ -95,3 +95,18 @@ assert battle.show_status_command("enemy", 0, "paralysis") == "J 00350c01"
 assert battle.show_status_command("enemy", 0, "burn") == "J 00350c04"
 assert battle.show_status_command("enemy", 0, "none") == "J 00350c00"
 print("ok comandos de pantalla")
+
+# clima del combate: "W:" con u32 clima y u32 turnos
+b = battle.parse("T:00,W:00000000ff000000")
+assert b["weather"] == {"weather": "none", "turns": None}, b
+assert battle.set_weather_command("rain", 5) == "G 0x21dd928 00000000ff000000 0200000005000000;J 003f0205"
+assert battle.set_weather_command("sun") == "G 0x21dd928 00000000ff000000 01000000ff000000;J 003f01ff"
+assert battle.set_weather_command("none") == "G 0x21dd928 00000000ff000000 00000000ff000000"   # ya no había: nada que mostrar
+battle.parse("T:00,W:0200000003000000")
+assert battle.set_weather_command("none").endswith(";J 004002")                                     # "dejó de llover"
+for bad in [lambda: battle.set_weather_command("fog"), lambda: battle.set_weather_command("rain", 0)]:
+    try:
+        bad(); raise SystemExit("debía fallar")
+    except ValueError:
+        pass
+print("ok clima del combate")

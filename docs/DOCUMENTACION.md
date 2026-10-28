@@ -81,6 +81,10 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Estado de combate | `0x021B5178` | u16 | `0x2100` o `0x2101` = en combate | Tracker (`battleStatus`, W2) | ✅ validado 25-oct |
 | Bandera de control libre | `0x0223B2F5` | u8 | `0` = caminando libre; `1` = menú, diálogo, equipo, datos, mochila, combate | `ram_tool.py diff` + `watch_ram.lua` | ✅ validado 26-oct (también tras reiniciar el juego) |
 | Variable del buzón | — | — | Para pasar mensajes al juego | — | ⚪ por buscar |
+| `FieldStatus_GetReserveScript` | `0x0201936C` | código | Lee el guion reservado (`FieldStatus` + `0x12`, u16) | pokebw2 (B2 `0x02019340` + `0x2C`) | ✅ usado 27-oct (combates forzados) |
+| `FieldScript_AttachOpcodeGuard` | `0x02153DC8` | código | Se llama al crear la máquina de un guion (`r0` = VM, `pc` en `+0x20`) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
+| Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 arena, 4 granizo) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
+| `ServerControl_CheckFainted` | `0x021A8A64` | código | Decide si un combatiente se debilita (`r1` = copia real) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 
 Leyenda: ✅ validado en el juego · 🟡 encontrado, falta confirmar algo · ⚪ pendiente.
 
@@ -263,6 +267,32 @@ de elegir acción. showdown-bw2 muestra que se puede: pausar la lógica (`server
 la elección real. Es factible pero frágil (el menú se cierra y reabre, y pausar/reanudar la lógica puede trabar el combate).
 Decisión (27-oct): no por ahora; alternativa barata si hiciera falta, un aviso dibujado por el Lua mientras el evento espera.
 
+### Combates forzados y clima del mapa (guiones propios)
+
+**Cómo:** el mapa revisa cada frame, con el personaje libre, si hay un "guion reservado" (`FieldStatus.reservedScript`, u16 en
+`+0x12`; `CheckReserveEventScriptCall` en `src/ov036/fieldmap_event.c`) y, si lo hay, lo ejecuta. El comando `S <hex>` del Lua:
+1. Aviso en `FieldStatus_GetReserveScript` (`r0` = FieldStatus): escribe el guion 2000 (global) como reservado.
+2. Aviso en `FieldScript_AttachOpcodeGuard` (`r0` = VM, recién cargado el guion): escribe nuestros bytes en `VM.pc` (`+0x20`),
+   encima del guion cargado. Solo se usa su espacio; el guion 2000 original no se ejecuta.
+3. El juego ejecuta nuestras órdenes con su propia lógica: transición, música, combate, derrota (`EventBattleLose`) y vuelta al mapa.
+
+Formato de los guiones: u16 por orden y u16 por argumento (little-endian; < `0x4000` = constante). Órdenes (pokebw2):
+`0x0174` combate salvaje (especie, nivel, opciones) · `0x0175` fin del combate salvaje · `0x0085` combate contra entrenador
+(entrenador 1, entrenador 2, opciones) · `0x008E` fin del combate contra entrenador · `0x0136` clima del mapa (clima, inmediato) ·
+`0x0002` fin. Se arman en `field_script.py`.
+
+**Desplazamiento White 2 / Black 2:** los símbolos públicos son de Black 2. Para el código principal es `+0x2C` y para los
+overlays del mapa (12, 36) y del combate (167), `+0x40`. Se comprobó contando cuántas funciones de los símbolos empiezan
+por `push {…, lr}` en los volcados con cada desplazamiento (`tools/symbol_offset.py`): ~98 % con el elegido.
+
+**Clima del mapa:** se pierde al volver de un combate (el mapa se recarga con el de la ruta). Con `persist` el puente lo
+vuelve a poner cada vez que se regresa al mapa. Un combate que empieza con lluvia/nieve/arena la mantiene
+(`ConvFieldWeatherToBtl`: 2, 6, 7 → lluvia; 3, 12 → granizo; 4, 5 → arena).
+
+**Clima del combate:** `sField` (estático de `btl_field.c`) guarda el clima que usa la lógica; la pantalla lo recibe con
+`WEATHER_START` (0x3F, clima y turnos) y `WEATHER_END` (0x40, clima). `battle_set_weather` escribe `sField` con guarda y manda
+el comando por la cola del cliente, igual que hace `ServerControl_ChangeWeatherCore`. Los turnos los descuenta el juego.
+
 ### Direcciones del tracker que aún no usamos (para la fase 5, combate)
 
 Son de `MemoryAddresses.lua` del NDS Ironmon Tracker (W2). Todas son puntero + offset, salvo que se diga otra cosa. **Ninguna está probada por nosotros.**
@@ -348,6 +378,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | | `J <hex>` inyecta comandos de pantalla en el siguiente turno del combate |
 | | `F <dir>` debilita a ese combatiente cuando el juego lo revise (vida 0) |
 | | `R <dir> <n>` lee bytes (herramienta de investigación) |
+| | `S <hex>` ejecuta un guion propio en cuanto el personaje quede libre (combates forzados, clima del mapa) |
 | | `SAVE` / `LOAD` savestate de seguridad (ranura 9) |
 | Lua → Python | `RES <ok\|fail> <detalle>` tras cada lote |
 
@@ -380,6 +411,8 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | `python rom.py "ruta.nds"` | Genera `gen5_data.json` desde la ROM (`--info`: solo dice qué juego es) |
 | `python tests/test_battle.py` | Pruebas de la lectura y escritura de combate (usa `dumps/combate1.bin` si existe) |
 | `python tests/test_rom.py` | Pruebas de la lectura de la ROM (incluye una ROM aleatorizada simulada) |
+| `python tests/test_field_script.py` | Pruebas de los guiones propios (combates forzados y clima) |
+| `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
 
@@ -508,6 +541,15 @@ Eventos disponibles:
 - `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
   Los PP sí se ven al momento en el menú de Luchar. Si el rival ya había elegido ese movimiento para el turno, lo intenta
   igual y sale el mensaje de que no le quedan PP (sin efecto), como en el juego normal.
+- `battle_set_weather` (experimental): clima del combate (`none`, `sun`, `rain`, `sandstorm`, `hail`), con `turns` opcional
+  (sin `turns` no se acaba). Se anima con el mensaje del juego al reproducirse el turno; con `none` sale el de fin del clima.
+  `/state` lo muestra en `battle.weather`.
+- `start_wild_battle`: combate salvaje contra `species` de nivel `level` (por defecto 5), en cualquier sitio del mapa (no hace falta
+  hierba). Espera a que el personaje esté libre.
+- `start_trainer_battle`: combate contra el entrenador `trainer` (1-813 en W2; la lista sale de la ROM: `a/0/9/1`), aunque ya lo
+  hayas vencido. Si pierdes, el juego hace lo de siempre (volver al Centro Pokémon).
+- `set_weather`: clima del mapa (`rain`, `snow`, `sandstorm`, `thunderstorm`, `heavy_rain`, `diamond_dust`, `none`, `zone` = el de
+  la ruta, o un número). `"persist": true` lo repone al volver de cada combate; `zone` lo quita.
 - Si un evento escribe en varios slots, el Lua revisa todos antes de escribir: o se aplican todos o ninguno.
 `when`: `"en_mapa"` (por defecto), `"en_combate"` (hoy siempre falla: fase 5) o `"cualquiera"`.
 
@@ -550,6 +592,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Causa del bucle con vida 0 encontrada en la decompilación (`CheckFainted` salta a los que ya tienen 0). BizHawk sí avisa al ejecutarse una dirección (`trace_faint.lua`: 10 llamadas en un turno). Nuevo comando `F`: el Lua pone la vida a 0 justo cuando el juego revisa a ese Pokémon. |
 | 27-oct | Pruebas visuales completas: congelado, quitar estado y evento durante las animaciones (la barra bajó a mitad de Leer). Sueño y envenenamiento grave implementados con el formato de `battle_condition.c` (pokebw2), pendientes de validar en el juego. |
 | 27-oct | Sueño y envenenamiento grave validados en el juego (combate contra entrenadora). El contador del sueño incluye el turno en que despierta: `turns` ahora significa turnos sin atacar. |
+| 27-oct | Fase 5 validada completa: entrenador con varios Pokémon (banco incluido) y combate doble. |
+| 27-oct | **Combates forzados:** guion reservado (`FieldStatus` + `0x12`) + nuestros bytes encima del guion cargado (avisos de ejecución). Combate salvaje fuera de la hierba y contra entrenador validados. Clima del mapa (se pierde al volver del combate; opción `persist`) y clima del combate (`sField` + `WEATHER_START`) validados. Desplazamientos W2/B2: `+0x2C` código principal, `+0x40` overlays. |
 
 ---
 
@@ -616,9 +660,22 @@ o si la memoria cambió entre la lectura y la escritura.
   Contraprueba: Oshawott con Tóxico puesto por `set_move` envenenó a un Lillipup y `/state` lo leyó como `toxic (turno 1)`:
   el juego escribe el mismo valor que nosotros.
 - [x] Probar parálisis, congelado y envenenado escritos, y quitar un estado (`none`).
-- [ ] Combate contra entrenador con varios Pokémon: el resto del equipo rival y los cambios de Pokémon.
-- [ ] Combate doble.
+- [x] Combate contra entrenador con varios Pokémon: `slot` 0 es siempre el que está en el campo (la tabla se reordena al cambiar).
+  Vida y parálisis a un Pokémon del banco (`"show": false`): se ven en la lista, entra con ellos, la parálisis actúa y al
+  terminar el combate el cambio queda en el equipo.
+- [x] Combate doble (salvaje): `slot` 0 y 1 son los dos en el campo. Vida, parálisis y envenenamiento grave salen en la barra
+  correcta; vida 0 a un rival: se debilita solo él y el combate sigue con el otro.
 
+
+### Combates forzados y clima (en el juego)
+- [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
+- [x] `start_trainer_battle` 165 (Chica): transición de entrenador, sacó un Purrloin, vuelta normal al mapa. Esperó a que se
+  cerrara un menú abierto.
+- [x] `set_weather` lluvia: llueve en el mapa y el siguiente combate empezó con lluvia; al volver al mapa, volvió el clima de la ruta.
+- [ ] `set_weather` con `persist`: debe reponerse al volver de cada combate.
+- [ ] Nombres de los climas del mapa (solo se vio el 2 = lluvia).
+- [x] `battle_set_weather` sol 3 turnos (contra una entrenadora): animación y mensaje al empezar el turno, y se acabó al tercero.
+- [ ] Combate contra entrenador doble (tipo de combate 1) y perder un combate forzado (debe volver al Centro Pokémon).
 
 ### Por buscar
 - [ ] **Variable del buzón** (ver siguiente paso).

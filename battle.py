@@ -31,6 +31,38 @@ def stages(raw: bytes) -> dict:
     return {name: raw[OFF_STAGES + i] - 6 for i, name in enumerate(STAGE_NAMES)}
 
 
+# Clima del combate: sField de btl_field.c (u32 clima, u32 turnos; 0xFF = sin fin). Números de ConvFieldWeatherToBtl
+# (field_encount.c): 2 lluvia, 3 arena, 4 granizo; el 1 es el sol. Validado en el volcado: sin clima = 0, 0xFF.
+WEATHER_IDS = {"none": 0, "sun": 1, "rain": 2, "sandstorm": 3, "hail": 4}
+WEATHER_NAMES = {v: k for k, v in WEATHER_IDS.items()}
+WEATHER_RAW: dict = {}
+WEATHER_ADDR = 0x021DD928          # White 2 (IRDO); el Lua lo manda como "W:"
+
+
+def set_weather_command(weather: str, turns=None) -> str:
+    """Cambia el clima del combate (G con guarda) y lo muestra con WEATHER_START / WEATHER_END, como el juego."""
+    if weather not in WEATHER_IDS:
+        raise ValueError(f"clima desconocido: {weather} (válidos: {', '.join(WEATHER_IDS)})")
+    if "raw" not in WEATHER_RAW:
+        raise ValueError("no se ha leído el clima de este combate todavía")
+    old = WEATHER_RAW["raw"]
+    old_weather = struct.unpack_from("<I", old)[0]
+    w = WEATHER_IDS[weather]
+    if w == 0:
+        if turns is not None:
+            raise ValueError("turns no se usa con none")
+        new = struct.pack("<II", 0, 0xFF)
+        show = battle_cmd.encode("WEATHER_END", old_weather) if old_weather else b""
+    else:
+        t = 0xFF if turns is None else int(turns)
+        if not (1 <= t <= 254 or t == 0xFF):
+            raise ValueError("turns debe ir de 1 a 254 (sin turns = sin fin)")
+        new = struct.pack("<II", w, t)
+        show = battle_cmd.encode("WEATHER_START", w, t)
+    cmd = f"G {WEATHER_ADDR:#x} {old.hex()} {new.hex()}"
+    return cmd + (f";J {show.hex()}" if show else "")
+
+
 # Bytes crudos del último POLL: {("player"|"enemy", índice, "real"|"visual"): (dirección, estructura)}
 RAW: dict = {}
 
@@ -38,11 +70,18 @@ RAW: dict = {}
 def parse(field: str) -> dict:
     """field = "T:<tabla>,p0:<dir>:<estructura>:<pk5>,e0:..." enviado por connector.lua en combate."""
     out = {"player": [], "enemy": [], "table": ""}
+    WEATHER_RAW.clear()
     RAW.clear()
     if field in ("", "-"):
         return out
     for part in field.split(","):
         bits = part.split(":")
+        if bits[0] == "W":                      # clima del combate: u32 clima, u32 turnos (255 = sin fin)
+            raw = bytes.fromhex(bits[1])
+            WEATHER_RAW["raw"] = raw
+            w, turns = struct.unpack("<II", raw)
+            out["weather"] = {"weather": WEATHER_NAMES.get(w, w), "turns": None if turns == 0xFF else turns}
+            continue
         if bits[0] == "T":
             out["table"] = bits[1]
             continue
