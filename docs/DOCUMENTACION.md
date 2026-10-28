@@ -788,7 +788,9 @@ o si la memoria cambió entre la lectura y la escritura.
 
 ### Estación (en el juego)
 - [x] `set_season` invierno en octubre: al salir de un edificio, nieve.
-- [ ] `set_season` `real`: al salir de un edificio vuelve el verano (con el cartel de cambio de estación).
+- [x] `set_season` `real`: al salir de un edificio vuelve el verano.
+- [x] `set_season` otoño y primavera: cambian el paisaje y las condiciones del mapa. No sale el cartel de cambio de
+  estación (normal: con la sincronización forzada el juego no compara con el reloj, que es quien muestra el cartel).
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
