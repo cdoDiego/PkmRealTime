@@ -500,6 +500,33 @@ Lo que cuelga del puntero (equipo, mochila, cajas, jugador) es igual en B2 y W2.
 - [ ] Guía de instalación paso a paso (Python, `pip install -r requirements.txt`, BizHawk, primer arranque).
 - [ ] Regalos en otras cajas, no solo en la caja 1.
 
+### Romhacks y randomizers (pendiente, retomar)
+
+Estado (28-oct): los **datos** se leen de la ROM de cada persona (especies, estadísticas, experiencia, movimientos y PP,
+habilidades, objetos, entrenadores) y se comprueba que sean de la ROM que se juega (código + CRC de la cabecera). Las
+**direcciones** de memoria y de código (equipo, mochila, combate, `check_fainted`, `reserve_get`, `script_vm`, `item_table`,
+`event_list`, `battle_field`...) están fijas en `GAMES` de `connector.lua`.
+
+| Tipo de ROM | Previsión |
+| --- | --- |
+| Randomizer (Universal Pokemon Randomizer ZX) | Debería funcionar: cambia datos, no código. **Sin probar.** |
+| Romhack que solo cambia datos | Igual que el randomizer. |
+| Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse; además hay límites fijos (649 especies de reserva, 638 objetos en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, `field_script`, listas de `bag.py`). |
+
+**Riesgo actual:** el Lua no comprueba que en cada dirección siga el código esperado; con un hack que lo mueva escribiría a ciegas
+(cuelgue o partida corrupta).
+
+Plan:
+- [ ] **1. Firmas antes de usar cada dirección (prioritario):** guardar en `GAMES` los primeros bytes esperados de cada función o
+  tabla (sacarlos de un volcado del juego original) y compararlos al arrancar el Lua. Si no coinciden, desactivar solo esa función
+  (F, S, I, comandos de pantalla...) y avisar en pantalla y en `/state` (p. ej. `"compat": {"forced_battles": false}`), y que el
+  puente rechace esos eventos con un mensaje claro.
+- [ ] **2. Buscar las direcciones si se movieron:** mismo método que `tools/symbol_offset.py` (buscar la firma en la RAM o en la
+  ROM); también sirve para Black 2.
+- [ ] **3. Probar con un randomizer:** ROM de White 2 randomizada con UPR ZX; revisar `/state` (nombres, PP), regalos, combate
+  forzado salvaje y contra entrenador, `battle_set_item`, huevos.
+- [ ] **4. Límites desde la ROM:** nº de objetos y especies leídos de la ROM en vez de 638/649 fijos.
+
 ## 7. API
 
 Todas las peticiones llevan la cabecera `x-token: dev-token-cambiame`.
@@ -653,6 +680,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Objeto en combate (`battle_set_item`, orden `I` del Lua): además de `+0x12`, registra sus efectos en la lista del combate como hace Truco. Validado (quitar Restos, dar Baya Zidra). Los eventos de combate esperan a que existan los combatientes y los datos del combate anterior se borran al salir. |
 | 28-oct | Huevos (`give_egg`, orden `0x010F` del juego) validados: eclosión normal caminando. `/state` marca los huevos. |
 | 28-oct | Eclosión rápida (`hatch_cycles`, `set_egg_cycles`) validada. |
+| 28-oct | Análisis de compatibilidad con romhacks y randomizers; plan anotado en la sección 6 (firmas de código, búsqueda de direcciones, prueba con UPR ZX, límites desde la ROM). |
 
 ---
 
