@@ -195,6 +195,7 @@ end
 -- nuestros bytes encima del guion cargado. El juego hace el resto (transición, música, vuelta al mapa).
 local RESERVE_ID = 2000           -- guion global 2000 (archivo SCRIPTS_GLOBAL_2000); solo se usa su espacio
 local pending_script = nil        -- bytes del guion
+local script_queue = {}           -- los que llegan mientras otro espera: van detrás, uno por vez
 local script_stage = ""           -- "armado" -> "reservado" -> "" (hecho)
 local script_status = ""
 local script_hooks = false
@@ -345,7 +346,6 @@ local function run(cmd)
   elseif op == "S" then                         -- ejecutar un guion propio en cuanto el personaje quede libre
     local game = GAMES[game_id()]
     if game == nil or game.reserve_get == nil then return false, "S: falta reserve_get para este juego" end
-    if pending_script ~= nil then return false, "S: ya hay un guion esperando" end
     if not script_hooks then
       local ok1, e1 = pcall(event.on_bus_exec, on_reserve_get, game.reserve_get, "connector_reserve")
       local ok2, e2 = pcall(event.on_bus_exec, on_script_vm, game.script_vm, "connector_script")
@@ -354,6 +354,10 @@ local function run(cmd)
         return false, "S: este núcleo no admite avisos de ejecución: " .. tostring(e1 or e2)
       end
       script_hooks = true
+    end
+    if pending_script ~= nil then
+      script_queue[#script_queue + 1] = from_hex(a)
+      return true, string.format("S en cola (%d detrás del actual)", #script_queue)
     end
     pending_script, script_stage = from_hex(a), "armado"
     script_status = string.format("esperando (%d bytes): se ejecuta con el personaje libre", #pending_script)
@@ -432,6 +436,10 @@ while true do
       faint_status = "descartado (terminó el combate)"
     end
     if faint_hook and faint_count() == 0 then faint_unhook() end   -- fuera del aviso, no desde dentro
+    if pending_script == nil and #script_queue > 0 then   -- el siguiente, cuando el anterior ya se ejecutó
+      pending_script, script_stage = table.remove(script_queue, 1), "armado"
+      script_status = string.format("esperando (%d bytes, %d más en cola)", #pending_script, #script_queue)
+    end
     if script_hooks and pending_script == nil then script_unhook() end
     comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s", mode, addr or 0, party, bag, box, trainer,
                                         code:gsub("[^%w]", "_"), crc, battle, misc))

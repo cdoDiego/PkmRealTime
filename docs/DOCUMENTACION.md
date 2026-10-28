@@ -438,6 +438,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | `python tests/test_rom.py` | Pruebas de la lectura de la ROM (incluye una ROM aleatorizada simulada) |
 | `python tests/test_field_script.py` | Pruebas de los guiones propios (combates forzados y clima) |
 | `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
+| `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
 
@@ -510,7 +511,7 @@ habilidades, objetos, entrenadores) y se comprueba que sean de la ROM que se jue
 | Tipo de ROM | Previsión |
 | --- | --- |
 | Randomizer (Universal Pokemon Randomizer ZX) | Debería funcionar: cambia datos, no código. **Sin probar.** |
-| Romhack que solo cambia datos | Igual que el randomizer. |
+| Romhack que solo cambia datos | Igual que el randomizer. **Volt White 2 (Drayano) validado el 28-oct**, ver abajo. |
 | Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse; además hay límites fijos (649 especies de reserva, 638 objetos en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, `field_script`, listas de `bag.py`). |
 
 **Riesgo actual:** el Lua no comprueba que en cada dirección siga el código esperado; con un hack que lo mueva escribiría a ciegas
@@ -525,6 +526,21 @@ Plan:
   ROM); también sirve para Black 2.
 - [ ] **3. Probar con un randomizer:** ROM de White 2 randomizada con UPR ZX; revisar `/state` (nombres, PP), regalos, combate
   forzado salvaje y contra entrenador, `battle_set_item`, huevos.
+- [ ] **5. Redux** (Blaze Black 2 / Volt White 2 Redux): cambia mucho más; pasarle antes `tools/rom_compare.py` y hacer el paso 1.
+
+**Herramienta:** `python tools/rom_compare.py <original.nds> <hack.nds>` compara overlays y el arm9 descomprimido (BLZ) y avisa
+si alguna zona cambiada toca una dirección que usa `connector.lua`.
+
+**Volt White 2 (28-oct, ROM "Complete", cartucho `IRDO`, CRC de cabecera `0a06`):**
+- Código: las 344 overlays idénticas (combate 167, mapa 12 y 36 incluidos); en el arm9, 7 zonas pequeñas (277 bytes), ninguna en
+  las direcciones que usamos.
+- Datos (`rom.py`): 579 de 649 especies cambiadas (p. ej. Pikachu 65 Atq / 100 Vel, habilidad Pararrayos), 844 entrenadores
+  (814 en el original; 384 cambiados), PP de un movimiento, 3 objetos, 11 clases.
+- Validado en el juego (partida nueva): `/state` con los datos del hack, combate salvaje forzado + `battle_set_item` (Restos),
+  combate contra el entrenador 838 (Vito/Tate, Reuniclus nivel 58; solo existe en el hack), regalo al equipo (Eevee) y huevo con
+  eclosión rápida (Larvesta), los dos enviados seguidos.
+- Arreglos que salieron: dos guiones seguidos (el Lua rechazaba el segundo; ahora van en cola), el huevo rápido se busca por especie
+  y no por hueco, y los símbolos PK/MN del texto (`PKMN Trainer`).
 - [ ] **4. Límites desde la ROM:** nº de objetos y especies leídos de la ROM en vez de 638/649 fijos.
 
 ## 7. API
@@ -681,6 +697,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Huevos (`give_egg`, orden `0x010F` del juego) validados: eclosión normal caminando. `/state` marca los huevos. |
 | 28-oct | Eclosión rápida (`hatch_cycles`, `set_egg_cycles`) validada. |
 | 28-oct | Análisis de compatibilidad con romhacks y randomizers; plan anotado en la sección 6 (firmas de código, búsqueda de direcciones, prueba con UPR ZX, límites desde la ROM). |
+| 28-oct | **Volt White 2 validado:** mismo código que White 2 (`tools/rom_compare.py`), datos leídos con `rom.py`. Guiones en cola en el Lua; huevo rápido por especie; texto PK/MN. |
 
 ---
 

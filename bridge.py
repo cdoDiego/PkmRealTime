@@ -104,7 +104,7 @@ class Event:
 _ids = itertools.count(1)
 events: dict[int, Event] = {}
 queue: list[int] = []
-pending_egg: Optional[dict] = None   # give_egg con hatch_cycles: hueco y especie del huevo que se espera ver llegar
+pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos de esa especie que ya había
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "money": None, "badges": None,
@@ -159,8 +159,11 @@ def build_commands(ev: Event) -> str:
             if d.get("hatch_cycles") is not None:
                 if not 0 <= int(d["hatch_cycles"]) <= 255:
                     raise ValueError("hatch_cycles debe ir de 0 a 255")
-                global pending_egg   # en cuanto aparezca en el equipo se le ponen los ciclos (set_egg_cycles)
-                pending_egg = {"slot": len(party_raw), "species": int(d["species"]), "cycles": int(d["hatch_cycles"])}
+                # en cuanto aparezca en el equipo se le ponen los ciclos (set_egg_cycles); su hueco puede cambiar si
+                # antes llega otro regalo, así que se busca un huevo de esa especie que no estuviera ya
+                sp = int(d["species"])
+                pending_eggs.append({"species": sp, "cycles": int(d["hatch_cycles"]),
+                                     "known": {i for i, m in enumerate(game["party"]) if m.get("egg") and m["species"] == sp}})
             return cmds
         if d["type"] == "teleport":
             return "SAVE;S " + field_script.teleport(str(need(d, "zone")), d.get("x"), d.get("z"))
@@ -317,13 +320,12 @@ def update_party(hexdata: str) -> None:
     size = config.PARTY_SLOT_SIZE
     party_raw[:] = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
     game["party"] = [pk5.summary(pk5.decrypt(r)) for r in party_raw]
-    global pending_egg
-    if pending_egg and pending_egg["slot"] < len(game["party"]):
-        mon = game["party"][pending_egg["slot"]]
-        if mon["valid"] and mon["egg"] and mon["species"] == pending_egg["species"]:
-            add_event(EventIn(type="set_egg_cycles", target={"slot": pending_egg["slot"]},
-                              hatch_cycles=pending_egg["cycles"]), "eclosión rápida")
-        pending_egg = None
+    for p in list(pending_eggs):
+        new = [i for i, m in enumerate(game["party"])
+               if m["valid"] and m.get("egg") and m["species"] == p["species"] and i not in p["known"]]
+        if new:
+            add_event(EventIn(type="set_egg_cycles", target={"slot": new[0]}, hatch_cycles=p["cycles"]), "eclosión rápida")
+            pending_eggs.remove(p)
     # slots vacíos o inválidos se marcan con valid=False; la app puede ocultarlos
 
 

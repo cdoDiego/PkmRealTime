@@ -153,7 +153,7 @@ def decode_text(d: bytes) -> list[str]:
             if c == 0xF100:          # texto comprimido (9 bits): no aparece en los nombres que usamos
                 chars.append("?")
                 break
-            chars.append({0x246D: "♂", 0x246E: "♀", 0xFFFE: "\n"}.get(c, chr(c)))
+            chars.append({0x246D: "♂", 0x246E: "♀", 0x2486: "PK", 0x2487: "MN", 0xFFFE: "\n"}.get(c, chr(c)))
         out.append("".join(chars))
     return out
 

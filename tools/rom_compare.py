@@ -1,0 +1,114 @@
+"""Compara el código de dos ROMs de NDS (p. ej. la original y un romhack) para saber si el puente funcionará.
+
+Uso:  python tools/rom_compare.py <original.nds> <hack.nds>
+
+Muestra el código del cartucho y el CRC de la cabecera, qué overlays cambian, y las zonas del arm9 (descomprimido)
+que son distintas, avisando si alguna toca una dirección que usa connector.lua (tabla USED de abajo).
+El arm9 viene comprimido con BLZ (compresión hacia atrás); el final de la parte comprimida está en los parámetros
+del módulo (tras la marca 0xDEC00621 0x2106C0DE, campo compressed_static_end).
+"""
+import struct
+import sys
+
+# Direcciones que usa connector.lua en White 2 (IRDO). Las de datos dinámicos (montón) no salen de la ROM.
+USED = {
+    0x0201936C: "reserve_get (FieldStatus_GetReserveScript)",
+    0x02153DC8: "script_vm (FieldScript_AttachOpcodeGuard, overlay)",
+    0x021A8A64: "check_fainted (overlay 167)",
+    0x021B1A15: "client_proc (overlay 167)",
+    0x021D8F68: "item_table (overlay 167)",
+}
+OVERLAYS_USED = (12, 36, 167)
+
+
+def blz_decompress(data: bytes) -> bytes:
+    footer, extra = struct.unpack_from("<II", data, len(data) - 8)
+    header_len, comp_len = footer >> 24, footer & 0xFFFFFF
+    start = len(data) - comp_len
+    src = data[start:len(data) - header_len]
+    out = bytearray(comp_len + extra)
+    si, di = len(src), len(out)
+    while si > 0 and di > 0:
+        si -= 1
+        flags = src[si]
+        for _ in range(8):
+            if si <= 0 or di <= 0:
+                break
+            if flags & 0x80:
+                si -= 2
+                b = src[si] | (src[si + 1] << 8)
+                n, disp = (b >> 12) + 3, (b & 0xFFF) + 3
+                for _ in range(n):
+                    di -= 1
+                    out[di] = out[di + disp]
+            else:
+                si -= 1
+                di -= 1
+                out[di] = src[si]
+            flags = (flags << 1) & 0xFF
+    return bytes(data[:start]) + bytes(out)
+
+
+def load(path: str):
+    with open(path, "rb") as f:
+        h = f.read(0x200)
+        code, crc = h[0xC:0x10].decode(errors="replace"), struct.unpack_from("<H", h, 0x15E)[0]
+        a9_off, _, a9_ram, a9_size = struct.unpack_from("<IIII", h, 0x20)
+        fat_off, fat_size, ovt_off, ovt_size = struct.unpack_from("<IIII", h, 0x48)
+        f.seek(a9_off); arm9 = f.read(a9_size)
+        f.seek(fat_off); fat = f.read(fat_size)
+        f.seek(ovt_off); ovt = f.read(ovt_size)
+        overlays = {}
+        for i in range(0, len(ovt), 32):
+            oid, ram, size, _, _, _, fid, _ = struct.unpack_from("<8I", ovt, i)
+            s, e = struct.unpack_from("<II", fat, fid * 8)
+            f.seek(s)
+            overlays[oid] = (ram, size, f.read(e - s))
+    mark = arm9.find(struct.pack("<II", 0xDEC00621, 0x2106C0DE))
+    if mark >= 0:
+        comp_end = struct.unpack_from("<I", arm9, mark - 0x1C + 0x14)[0]
+        if comp_end:
+            arm9 = blz_decompress(arm9[:comp_end - a9_ram]) + arm9[comp_end - a9_ram:]
+    return code, crc, a9_ram, arm9, overlays
+
+
+def diff_regions(a: bytes, b: bytes, base: int):
+    out, i, n = [], 0, min(len(a), len(b))
+    while i < n:
+        if a[i] != b[i]:
+            j = i
+            while j < n and a[j:j + 16] != b[j:j + 16]:
+                j += 1
+            out.append((base + i, j - i))
+            i = j
+        i += 1
+    return out
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__)
+    ca, ra, a9r, arm_a, ov_a = load(sys.argv[1])
+    cb, rb, _, arm_b, ov_b = load(sys.argv[2])
+    print(f"cartucho {ca} / {cb}   crc cabecera {ra:04x} / {rb:04x}")
+    changed = [o for o in ov_a if ov_a[o][2] != ov_b.get(o, (0, 0, b""))[2]]
+    print(f"overlays: {len(ov_a)} / {len(ov_b)}; distintos: {changed or 'ninguno'}")
+    for o in OVERLAYS_USED:
+        if o in changed:
+            print(f"  ATENCIÓN: el overlay {o} lo usa connector.lua y ha cambiado")
+        if o in ov_a and o in ov_b and ov_a[o][:2] != ov_b[o][:2]:
+            print(f"  ATENCIÓN: el overlay {o} se carga en otra dirección o con otro tamaño")
+    regions = diff_regions(arm_a, arm_b, a9r)
+    total = sum(n for _, n in regions)
+    print(f"arm9: {len(arm_a)} / {len(arm_b)} bytes; {len(regions)} zonas distintas ({total} bytes)")
+    for addr, n in regions:
+        hits = [name for u, name in USED.items() if addr - 16 <= u < addr + n + 16]
+        print(f"  {addr:#010x} +{n}" + (f"   <-- toca {', '.join(hits)}" if hits else ""))
+    bad = changed and any(o in changed for o in OVERLAYS_USED)
+    hit = any(addr - 16 <= u < addr + n + 16 for addr, n in regions for u in USED)
+    print("\nResultado:", "revisar: cambia código que usamos" if bad or hit else
+          "el código que usa el puente es el mismo (los datos se leen de la ROM con rom.py)")
+
+
+if __name__ == "__main__":
+    main()
