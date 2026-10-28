@@ -120,8 +120,11 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
         plain = pk5.decrypt(bytes.fromhex(mon_hex))
         s = pk5.summary(plain)
         sp = s["species"]
+        abilities = gamedata.DATA.get("abilities", [])
         info.update(species=sp, valid=s["valid"],
-                    name=gamedata.DATA.get("species", {}).get(str(sp), {}).get("name", "?"))
+                    name=gamedata.DATA.get("species", {}).get(str(sp), {}).get("name", "?"),
+                    shiny=s["shiny"], gender=s["gender"], form=s["form"], hidden_ability=s["hidden_ability"],
+                    ability=abilities[s["ability"]] if s["ability"] < len(abilities) else s["ability"])
     return info
 
 

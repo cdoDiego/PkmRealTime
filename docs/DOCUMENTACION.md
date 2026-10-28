@@ -281,7 +281,9 @@ Formato de los guiones: u16 por orden y u16 por argumento (little-endian; < `0x4
 `0x0174` combate salvaje (especie, nivel, opciones) · `0x0175` fin del combate salvaje · `0x0177` ¿ganó? (variable) · `0x0176`
 derrota · `0x0085` combate contra entrenador (entrenador 1, entrenador 2, opciones) · `0x008D` ¿ganó? · `0x008C` derrota ·
 `0x008E` fin del combate contra entrenador · `0x0019` comparar variable con valor · `0x001F` saltar si (condición u8, salto u32) ·
-`0x0136` clima del mapa (clima, inmediato) · `0x0002` fin. Se arman en `field_script.py`. Tras cada combate el guion pregunta si
+`0x0136` clima del mapa (clima, inmediato) · `0x028A` volar a una zona (zona, dirección) · `0x00C2` ir a una casilla (zona, x, z,
+dirección) · `0x010E` añadir al equipo (resultado, especie, forma, nivel, habilidad, sexo, variocolor, objeto, ball) · `0x0123`
+lo mismo a la primera caja con sitio · `0x0002` fin. Se arman en `field_script.py`. Tras cada combate el guion pregunta si
 ganó: si perdió, derrota; si no, vuelta al mapa (sin eso, perder cuelga el juego).
 
 **Desplazamiento White 2 / Black 2:** los símbolos públicos son de Black 2. Para el código principal es `+0x2C` y para los
@@ -547,10 +549,22 @@ Eventos disponibles:
 - `battle_set_weather` (experimental): clima del combate (`none`, `sun`, `rain`, `sandstorm`, `hail`), con `turns` opcional
   (sin `turns` no se acaba). Se anima con el mensaje del juego al reproducirse el turno; con `none` sale el de fin del clima.
   `/state` lo muestra en `battle.weather`.
+- `give_item` / `take_item` funcionan también **en combate** (con `"when": "cualquiera"` o `"en_combate"`): la mochila del
+  combate es la misma que la del mapa. Validado: Master Ball dada en pleno combate y usada para capturar.
+- `/state`: cada Pokémon (equipo y combate) muestra también `shiny`, `gender`, `form`, `ability` y `hidden_ability`.
 - `give_money` / `take_money` / `set_money`: dinero (`qty`). No baja de 0 ni pasa de 9.999.999. Con el personaje libre.
   `/state` muestra `money` y `badges` (número de medallas).
+- `teleport`: `zone` = ciudad (`aspertia`, `virbank`, `castelia`, `nimbasa`, `driftveil`, `mistralton`, `icirrus`, `opelucid`,
+  `lacunosa`, `undella`, `humilau`, `nacrene`, `striaton`, `accumula`, `nuvema`, `pokemon_league`, `victory_road`, `black_city`,
+  `white_forest`) o número de zona: al punto de aterrizaje de Vuelo (zonas de `RESPAWN_ZONE_INFO`, `src/ov012/respawn_zone.c`).
+  Con `x` y `z`, a esa casilla (cuidado con las paredes). Ir a una ciudad aún no visitada puede saltarse eventos de la historia.
+- `give_pokemon` con `"destination": "party"`: lo crea el juego (entrenador, lugar de captura actual, Pokédex) y lo mete en el
+  equipo; si está lleno, en la primera caja con sitio (de cualquier caja). Opciones: `level`, `form`, `gender`, `hidden_ability`,
+  `item`, `ball`, `shiny`. Movimientos y naturaleza los decide el juego (para elegirlos, el método de la caja 1).
 - `start_wild_battle`: combate salvaje contra `species` de nivel `level` (por defecto 5), en cualquier sitio del mapa (no hace falta
-  hierba). Espera a que el personaje esté libre.
+  hierba). Espera a que el personaje esté libre. Opciones (orden `0x0297` y sus flags, `EventWildBattleCall_CreateStatic`):
+  `form`, `shiny` (flag `0x02`), `gender` (`0x20` macho / `0x40` hembra), `hidden_ability` (`0x08`), `no_flee` (`0x01`).
+  El objeto que lleva no se puede elegir así.
 - `start_trainer_battle`: combate contra el entrenador `trainer` (1-813 en W2; la lista sale de la ROM: `a/0/9/1`), aunque ya lo
   hayas vencido. Si pierdes, el juego hace lo de siempre (volver al Centro Pokémon).
 - `set_weather`: clima del mapa, por nombre o número: `none` 0, `snow` 1, `rain` 2, `sandstorm` 3 (arena en combate), `hail` 4
@@ -603,6 +617,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | **Combates forzados:** guion reservado (`FieldStatus` + `0x12`) + nuestros bytes encima del guion cargado (avisos de ejecución). Combate salvaje fuera de la hierba y contra entrenador validados. Clima del mapa (se pierde al volver del combate; opción `persist`) y clima del combate (`sField` + `WEATHER_START`) validados. Desplazamientos W2/B2: `+0x2C` código principal, `+0x40` overlays. |
 | 27-oct | Dinero en el bloque Misc (puntero + `0x21A20`, no en MyStatus). `give_money`/`take_money`/`set_money` validados; persiste al guardar. La variable del buzón queda descartada: los guiones propios la sustituyen. |
 | 27-oct | Climas del mapa 1-13 identificados; en combate 3 = granizo y 4 = arena (corregido). Perder un combate forzado colgaba el juego: el guion ahora comprueba la victoria y llama a la derrota como los del juego. Validado con un entrenador doble. |
+| 27-oct | Teletransporte (`0x028A` volar a una zona; tabla de destinos de Vuelo) y regalo al equipo con la orden del juego (`0x010E`, con caída a la caja `0x0123`) validados. El parámetro sin nombre de `BoxPkmCreateParams` (`param1C`) es el variocolor. |
+| 27-oct | Combate salvaje con opciones (forma, variocolor `0x02`, sexo, oculta, sin huida) validado. Objetos en combate: la mochila es la misma, el Lua la manda también en combate. `/state` muestra variocolor, sexo, forma y habilidad. |
 
 ---
 
@@ -694,6 +710,13 @@ o si la memoria cambió entre la lectura y la escritura.
   del juego. Corregido (`0x8D`/`0x177` ¿ganó?, `0x19` comparar, `0x1F` saltar, `0x8C`/`0x176` derrota): al perder, fundido a
   negro, Centro Pokémon con el equipo curado y ₽240 menos.
 - [ ] Perder un combate salvaje forzado (mismo mecanismo, no probado).
+- [x] `teleport` a `aspertia`: fundido a negro y apareció frente a la casa del protagonista; todo normal.
+- [x] `teleport` con `x`/`z`: zona 435, casilla 7,12 (Centro Pokémon de Engobe, de `RESPAWN_ZONE_INFO`): frente al mostrador.
+- [x] `start_wild_battle` con opciones: Eevee variocolor, hembra, Anticipación (oculta) y sin poder huir. Con `0x10` no salió
+  variocolor: el variocolor es `0x02`. Tras debilitarse tu Pokémon sí se puede huir desde la pregunta de cambio (normal).
+- [x] Master Ball dada durante el combate (escrita en la mochila) y captura correcta; el Eevee llegó a la caja con sus datos.
+- [x] `give_pokemon` al equipo: Pikachu nivel 10 variocolor (el `param1C` sin nombre es el variocolor: 1 = sí) y hembra, entrenador
+  Diego, conocido en Pueblo Floccesy. Con el equipo lleno, un Eevee fue al hueco 3 de la caja 1.
 
 ### Por buscar
 - [ ] Fase 5: validar las direcciones de combate del tracker.

@@ -327,6 +327,7 @@ while true do
       misc = read_hex(ptr + MISC_PTR_OFF, MISC_SIZE)
     elseif addr ~= nil and mode == "battle" then
       battle = battle_hex(addr - PARTY_PTR_OFF, game)
+      bag = read_hex(addr - PARTY_PTR_OFF + BAG_PTR_OFF, BAG_SIZE)   -- la mochila del combate es la misma (validado 27-oct)
     end
     if mode ~= "battle" and pending_inject ~= nil then   -- el combate terminó: lo pendiente ya no aplica
       pending_inject = nil

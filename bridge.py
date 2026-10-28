@@ -39,8 +39,8 @@ import pk5
 When = Literal["en_mapa", "en_combate", "cualquiera"]
 WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"},
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
-BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather"}
-FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather"}   # esperan al mapa (personaje libre)   # siempre esperan al combate, aunque no se indique "when"
+BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather"}   # siempre esperan al combate
+FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport"}   # esperan al mapa (personaje libre)
 
 
 class EventIn(BaseModel):
@@ -49,7 +49,7 @@ class EventIn(BaseModel):
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "give_money", "take_money", "set_money",
-                  "start_wild_battle", "start_trainer_battle", "set_weather",
+                  "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
@@ -79,6 +79,13 @@ class EventIn(BaseModel):
     show: bool = True                # battle_set_hp / battle_set_status: actualizar también la pantalla
     trainer: Optional[int] = None    # start_trainer_battle: nº de entrenador (de la ROM)
     weather: Optional[str] = None    # set_weather: rain, snow, sandstorm... o número; battle_set_weather: none, sun, rain, sandstorm, hail
+    destination: Optional[str] = None  # give_pokemon: "box1" (por defecto, todas las opciones) o "party" (orden del juego)
+    form: Optional[int] = None       # give_pokemon al equipo / start_wild_battle: forma
+    no_flee: bool = False            # start_wild_battle: no se puede huir
+    ball: Optional[int] = None       # give_pokemon al equipo: ball (4 = Poké Ball)
+    zone: Optional[str] = None       # teleport: ciudad (aspertia, castelia...) o número de zona
+    x: Optional[int] = None          # teleport: casilla (opcional, con z)
+    z: Optional[int] = None
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
 
 
@@ -137,9 +144,13 @@ def build_commands(ev: Event) -> str:
         if game["mode"] == "battle":
             raise ValueError("no se puede durante un combate")
         if d["type"] == "start_wild_battle":
-            return "SAVE;S " + field_script.wild_battle(int(need(d, "species")), int(d["level"] or 5))
+            return "SAVE;S " + field_script.wild_battle(int(need(d, "species")), int(d["level"] or 5), int(d.get("form") or 0),
+                                                        True if d["shiny"] else None, d["hidden_ability"], d["gender"],
+                                                        d.get("no_flee"))
         if d["type"] == "start_trainer_battle":
             return "SAVE;S " + field_script.trainer_battle(int(need(d, "trainer")))
+        if d["type"] == "teleport":
+            return "SAVE;S " + field_script.teleport(str(need(d, "zone")), d.get("x"), d.get("z"))
         global persistent_weather
         w = str(need(d, "weather"))
         cmds = "SAVE;S " + field_script.field_weather(int(w) if w.isdigit() else w)
@@ -169,12 +180,18 @@ def build_commands(ev: Event) -> str:
                          "o ejecuta  python rom.py <ruta.nds>  y reinicia el puente")
     if d["target"].get("side", "player") != "player":
         raise ValueError("eventos sobre el rival requieren la estructura de batalla (fase 5)")
+    if d["type"] in ("give_item", "take_item"):   # también en combate (con "when": "cualquiera" o "en_combate")
+        return bag_commands(d)
     if d["when"] == "en_combate" or game["mode"] == "battle":
         raise ValueError("en combate se escribe en la estructura de batalla (fase 5)")
-    if d["type"] in ("give_item", "take_item"):
-        return bag_commands(d)
     if d["type"] in ("give_money", "take_money", "set_money"):
         return money_commands(d)
+    if d["type"] == "give_pokemon" and d.get("destination") == "party":   # con la orden del juego (guion propio)
+        if d["moves"] or d["nature"] is not None:
+            raise ValueError("al equipo no se pueden elegir movimientos ni naturaleza (los decide el juego); usa destination box1")
+        return "SAVE;S " + field_script.give_pokemon(int(need(d, "species")), int(d["level"] or 5), int(d.get("form") or 0),
+                                                     d["hidden_ability"], d["gender"], int(d["item"] or 0),
+                                                     int(d.get("ball") or 4), d["shiny"])
     if d["type"] == "give_pokemon":
         return gift_commands(d)
     if d["type"] == "heal" and "slot" not in d["target"]:
@@ -401,9 +418,9 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     add_event(EventIn(type="set_weather", weather=persistent_weather), "clima persistente")
                 game["mode"], game["updated"] = mode, time.time()
                 game["party_addr"] = int(addr, 16) if addr else 0   # el puntero puede moverse
+                update_bag(hexbag)     # también en combate: la mochila del combate es la misma
                 if mode != "battle":   # en combate el bloque del equipo puede no estar al día
                     update_party("" if hexparty == "-" else hexparty)
-                    update_bag(hexbag)
                     update_box(hexbox, hextrainer)
                     update_misc(hexmisc)
                 # BizHawk 2.6.2+ solo lee respuestas "<longitud> <mensaje>"; sin eso se bloquea esperando

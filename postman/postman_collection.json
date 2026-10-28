@@ -1939,11 +1939,59 @@
             },
             "description": ""
           }
+        },
+        {
+          "name": "Dar Master Ball (también en combate)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_item\",\n  \"item\": 1,\n  \"qty\": 1,\n  \"when\": \"cualquiera\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Con when cualquiera se aplica también durante un combate (la mochila es la misma)."
+          }
         }
       ]
     },
     {
-      "name": "8. Regalar Pokémon (caja 1)",
+      "name": "8. Regalar Pokémon (caja 1 o equipo)",
       "description": "Crea un Pokémon nuevo en el primer hueco libre de la caja 1. Comprobar en el PC: datos, movimientos, entrenador (Diego), y retirarlo al equipo. /state muestra la caja en 'box1'.",
       "item": [
         {
@@ -2280,6 +2328,54 @@
               ]
             },
             "description": "Nidoran♀ solo puede ser hembra."
+          }
+        },
+        {
+          "name": "Al equipo: Pikachu nivel 10 variocolor hembra",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"give_pokemon\",\n  \"destination\": \"party\",\n  \"species\": 25,\n  \"level\": 10,\n  \"shiny\": true,\n  \"gender\": \"female\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Lo crea el juego (orden 0x010E). Si el equipo está lleno va a la primera caja con sitio. Opciones: form, hidden_ability, gender, item, ball, shiny. Sin movimientos ni naturaleza."
           }
         }
       ]
@@ -3251,7 +3347,7 @@
       ]
     },
     {
-      "name": "10. Mapa: combates forzados y clima",
+      "name": "10. Mapa: combates forzados, clima y teletransporte",
       "description": "Guiones propios: el juego los ejecuta en cuanto el personaje queda libre en el mapa (no en menús ni diálogos).",
       "item": [
         {
@@ -3300,6 +3396,54 @@
               ]
             },
             "description": "Empieza en cuanto el personaje esté libre en el mapa, en cualquier sitio (no hace falta hierba)."
+          }
+        },
+        {
+          "name": "Combate salvaje con opciones: Eevee variocolor hembra, habilidad oculta, sin huida",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"start_wild_battle\",\n  \"species\": 133,\n  \"level\": 15,\n  \"shiny\": true,\n  \"gender\": \"female\",\n  \"hidden_ability\": true,\n  \"no_flee\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Opciones: form, shiny, gender, hidden_ability, no_flee."
           }
         },
         {
@@ -3492,6 +3636,102 @@
               ]
             },
             "description": "Debe quedar en fallo con el motivo."
+          }
+        },
+        {
+          "name": "Teletransporte: Ciudad Engobe (Aspertia)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"teleport\",\n  \"zone\": \"aspertia\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Ciudades: aspertia, virbank, castelia, nimbasa, driftveil, mistralton, icirrus, opelucid, lacunosa, undella, humilau, nacrene, striaton, accumula, nuvema, pokemon_league, victory_road, black_city, white_forest; o un número de zona. Va al punto de aterrizaje de Vuelo."
+          }
+        },
+        {
+          "name": "Teletransporte: zona y casilla",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "if (r.id) { pm.collectionVariables.set('eventId', r.id); }",
+                  "pm.test('evento creado', () => pm.expect(r.state).to.eql('pendiente'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"teleport\",\n  \"zone\": \"28\",\n  \"x\": 100,\n  \"z\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Con x y z: a esa casilla de la zona (cuidado: una casilla dentro de una pared puede dejarte atascado)."
           }
         }
       ]

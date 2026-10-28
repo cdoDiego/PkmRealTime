@@ -119,6 +119,17 @@ def summary(plain: bytes) -> dict:
         "pp": list(plain[OFF_PP:OFF_PP + 4]),
         "valid": is_valid(plain),
     }
+    # bloques sin cifrar del PK5 (PKHeX PK5): PID 0x00, TID/SID 0x0C/0x0E, habilidad 0x15, 0x40 bits (1 hembra,
+    # 2 sin sexo, 3-7 forma), 0x41 naturaleza, 0x42 bit 0 = habilidad oculta
+    pid, tid, sid = struct.unpack_from("<I", plain, 0)[0], u16(0x0C), u16(0x0E)
+    info.update(
+        shiny=((pid >> 16) ^ (pid & 0xFFFF) ^ tid ^ sid) < 8,
+        gender="genderless" if plain[0x40] & 4 else "female" if plain[0x40] & 2 else "male",
+        form=plain[0x40] >> 3,
+        ability=plain[0x15],
+        hidden_ability=bool(plain[0x42] & 1),
+        nature=plain[0x41],
+    )
     if len(plain) >= PARTY_SIZE:
         st = struct.unpack_from("<I", plain, OFF_STATUS)[0]
         info.update(
