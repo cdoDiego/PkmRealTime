@@ -84,7 +84,7 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Variable del buzón | — | — | Idea inicial para pasar mensajes al juego | — | ➖ ya no hace falta: los guiones propios (`S`) cubren ese uso |
 | `FieldStatus_GetReserveScript` | `0x0201936C` | código | Lee el guion reservado (`FieldStatus` + `0x12`, u16) | pokebw2 (B2 `0x02019340` + `0x2C`) | ✅ usado 27-oct (combates forzados) |
 | `FieldScript_AttachOpcodeGuard` | `0x02153DC8` | código | Se llama al crear la máquina de un guion (`r0` = VM, `pc` en `+0x20`) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
-| Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 arena, 4 granizo) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
+| Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 granizo, 4 arena) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
 | `ServerControl_CheckFainted` | `0x021A8A64` | código | Decide si un combatiente se debilita (`r1` = copia real) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 
 Leyenda: ✅ validado en el juego · 🟡 encontrado, falta confirmar algo · ⚪ pendiente.
@@ -278,9 +278,11 @@ Decisión (27-oct): no por ahora; alternativa barata si hiciera falta, un aviso 
 3. El juego ejecuta nuestras órdenes con su propia lógica: transición, música, combate, derrota (`EventBattleLose`) y vuelta al mapa.
 
 Formato de los guiones: u16 por orden y u16 por argumento (little-endian; < `0x4000` = constante). Órdenes (pokebw2):
-`0x0174` combate salvaje (especie, nivel, opciones) · `0x0175` fin del combate salvaje · `0x0085` combate contra entrenador
-(entrenador 1, entrenador 2, opciones) · `0x008E` fin del combate contra entrenador · `0x0136` clima del mapa (clima, inmediato) ·
-`0x0002` fin. Se arman en `field_script.py`.
+`0x0174` combate salvaje (especie, nivel, opciones) · `0x0175` fin del combate salvaje · `0x0177` ¿ganó? (variable) · `0x0176`
+derrota · `0x0085` combate contra entrenador (entrenador 1, entrenador 2, opciones) · `0x008D` ¿ganó? · `0x008C` derrota ·
+`0x008E` fin del combate contra entrenador · `0x0019` comparar variable con valor · `0x001F` saltar si (condición u8, salto u32) ·
+`0x0136` clima del mapa (clima, inmediato) · `0x0002` fin. Se arman en `field_script.py`. Tras cada combate el guion pregunta si
+ganó: si perdió, derrota; si no, vuelta al mapa (sin eso, perder cuelga el juego).
 
 **Desplazamiento White 2 / Black 2:** los símbolos públicos son de Black 2. Para el código principal es `+0x2C` y para los
 overlays del mapa (12, 36) y del combate (167), `+0x40`. Se comprobó contando cuántas funciones de los símbolos empiezan
@@ -288,7 +290,7 @@ por `push {…, lr}` en los volcados con cada desplazamiento (`tools/symbol_offs
 
 **Clima del mapa:** se pierde al volver de un combate (el mapa se recarga con el de la ruta). Con `persist` el puente lo
 vuelve a poner cada vez que se regresa al mapa. Un combate que empieza con lluvia/nieve/arena la mantiene
-(`ConvFieldWeatherToBtl`: 2, 6, 7 → lluvia; 3, 12 → granizo; 4, 5 → arena).
+(`ConvFieldWeatherToBtl`: 2, 6, 7 → lluvia; 3, 12 → arena; 4, 5 → granizo; validado con 3 y 4).
 
 **Clima del combate:** `sField` (estático de `btl_field.c`) guarda el clima que usa la lógica; la pantalla lo recibe con
 `WEATHER_START` (0x3F, clima y turnos) y `WEATHER_END` (0x40, clima). `battle_set_weather` escribe `sField` con guarda y manda
@@ -551,8 +553,10 @@ Eventos disponibles:
   hierba). Espera a que el personaje esté libre.
 - `start_trainer_battle`: combate contra el entrenador `trainer` (1-813 en W2; la lista sale de la ROM: `a/0/9/1`), aunque ya lo
   hayas vencido. Si pierdes, el juego hace lo de siempre (volver al Centro Pokémon).
-- `set_weather`: clima del mapa (`rain`, `snow`, `sandstorm`, `thunderstorm`, `heavy_rain`, `diamond_dust`, `none`, `zone` = el de
-  la ruta, o un número). `"persist": true` lo repone al volver de cada combate; `zone` lo quita.
+- `set_weather`: clima del mapa, por nombre o número: `none` 0, `snow` 1, `rain` 2, `sandstorm` 3 (arena en combate), `hail` 4
+  (granizo en combate), `blizzard` 5 (granizo), `heavy_rain` 6 (lluvia), `rain_streaks` 7 (lluvia), `diamond_dust` 8, `fog` 9,
+  `overcast` 10, `light_fog` 11, `heavy_sandstorm` 12 (arena), `overcast2` 13, `zone` = el de la ruta. Los que no dicen nada
+  no dan clima en combate. `"persist": true` lo repone al volver de cada combate; `zone` lo quita.
 - Si un evento escribe en varios slots, el Lua revisa todos antes de escribir: o se aplican todos o ninguno.
 `when`: `"en_mapa"` (por defecto), `"en_combate"` (hoy siempre falla: fase 5) o `"cualquiera"`.
 
@@ -598,6 +602,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Fase 5 validada completa: entrenador con varios Pokémon (banco incluido) y combate doble. |
 | 27-oct | **Combates forzados:** guion reservado (`FieldStatus` + `0x12`) + nuestros bytes encima del guion cargado (avisos de ejecución). Combate salvaje fuera de la hierba y contra entrenador validados. Clima del mapa (se pierde al volver del combate; opción `persist`) y clima del combate (`sField` + `WEATHER_START`) validados. Desplazamientos W2/B2: `+0x2C` código principal, `+0x40` overlays. |
 | 27-oct | Dinero en el bloque Misc (puntero + `0x21A20`, no en MyStatus). `give_money`/`take_money`/`set_money` validados; persiste al guardar. La variable del buzón queda descartada: los guiones propios la sustituyen. |
+| 27-oct | Climas del mapa 1-13 identificados; en combate 3 = granizo y 4 = arena (corregido). Perder un combate forzado colgaba el juego: el guion ahora comprueba la victoria y llama a la derrota como los del juego. Validado con un entrenador doble. |
 
 ---
 
@@ -679,10 +684,16 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] `start_trainer_battle` 165 (Chica): transición de entrenador, sacó un Purrloin, vuelta normal al mapa. Esperó a que se
   cerrara un menú abierto.
 - [x] `set_weather` lluvia: llueve en el mapa y el siguiente combate empezó con lluvia; al volver al mapa, volvió el clima de la ruta.
-- [ ] `set_weather` con `persist`: debe reponerse al volver de cada combate.
-- [ ] Nombres de los climas del mapa (solo se vio el 2 = lluvia).
+- [x] `set_weather` con `persist`: la lluvia volvió sola tras huir de un combate.
+- [x] Climas del mapa 1-13 vistos uno a uno (nombres en la sección 7). El 3 dio arena y el 4/5 granizo con daño en combate:
+  así se vio que en combate 3 = granizo y 4 = arena (estaban al revés en `battle_set_weather`; corregido).
 - [x] `battle_set_weather` sol 3 turnos (contra una entrenadora): animación y mensaje al empezar el turno, y se acabó al tercero.
-- [ ] Combate contra entrenador doble (tipo de combate 1) y perder un combate forzado (debe volver al Centro Pokémon).
+- [x] Entrenador doble (21, Backers: dos Darumaka nivel 31): combate doble correcto.
+- [x] Perder un combate forzado: la primera versión **se colgó** ("An error has occurred"). En combates lanzados por guion el
+  juego no hace la derrota solo (`EventBattleCall`, `unk14`): el guion debe preguntar si ganó y llamar a la derrota, como los
+  del juego. Corregido (`0x8D`/`0x177` ¿ganó?, `0x19` comparar, `0x1F` saltar, `0x8C`/`0x176` derrota): al perder, fundido a
+  negro, Centro Pokémon con el equipo curado y ₽240 menos.
+- [ ] Perder un combate salvaje forzado (mismo mecanismo, no probado).
 
 ### Por buscar
 - [ ] Fase 5: validar las direcciones de combate del tracker.

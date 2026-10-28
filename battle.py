@@ -32,8 +32,9 @@ def stages(raw: bytes) -> dict:
 
 
 # Clima del combate: sField de btl_field.c (u32 clima, u32 turnos; 0xFF = sin fin). Números de ConvFieldWeatherToBtl
-# (field_encount.c): 2 lluvia, 3 arena, 4 granizo; el 1 es el sol. Validado en el volcado: sin clima = 0, 0xFF.
-WEATHER_IDS = {"none": 0, "sun": 1, "rain": 2, "sandstorm": 3, "hail": 4}
+# (field_encount.c) y validados en el juego: el clima 3 del mapa (arena) entra al combate como 4, y el 4 (nieve fuerte)
+# como 3, que hizo daño de granizo. El 1 es el sol. Sin clima = 0, 0xFF.
+WEATHER_IDS = {"none": 0, "sun": 1, "rain": 2, "hail": 3, "sandstorm": 4}
 WEATHER_NAMES = {v: k for k, v in WEATHER_IDS.items()}
 WEATHER_RAW: dict = {}
 WEATHER_ADDR = 0x021DD928          # White 2 (IRDO); el Lua lo manda como "W:"

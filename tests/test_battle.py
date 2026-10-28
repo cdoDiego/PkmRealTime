@@ -102,6 +102,7 @@ assert b["weather"] == {"weather": "none", "turns": None}, b
 assert battle.set_weather_command("rain", 5) == "G 0x21dd928 00000000ff000000 0200000005000000;J 003f0205"
 assert battle.set_weather_command("sun") == "G 0x21dd928 00000000ff000000 01000000ff000000;J 003f01ff"
 assert battle.set_weather_command("none") == "G 0x21dd928 00000000ff000000 00000000ff000000"   # ya no había: nada que mostrar
+assert battle.set_weather_command("hail").startswith("G 0x21dd928 00000000ff000000 03000000")
 battle.parse("T:00,W:0200000003000000")
 assert battle.set_weather_command("none").endswith(";J 004002")                                     # "dejó de llover"
 for bad in [lambda: battle.set_weather_command("fog"), lambda: battle.set_weather_command("rain", 0)]:
