@@ -33,6 +33,8 @@ BOX_SLOTS = 30
 
 TRAINER_PTR_OFF = 0x19D20    # datos del jugador (MyStatus): nombre, TID/SID, idioma, juego, género
 TRAINER_SIZE = 0x24
+SEASON_PTR_OFF = 0x36834     # estación u8 (0 primavera, 1 verano, 2 otoño, 3 invierno); código Action Replay "Season Changing"
+SEASON_FORCE_OFF = 0x0A     # desde la estación: sincronización forzada u8 (GameData + 0x1D2; la estación es + 0x1C8)
 MISC_PTR_OFF = 0x21A20       # bloque Misc del save (0x21100): dinero u32, medallas u8 en +4
 MISC_SIZE = 8
 MAX_MONEY = 9_999_999

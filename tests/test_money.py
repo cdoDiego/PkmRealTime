@@ -1,4 +1,4 @@
-"""Pruebas del dinero (python tests/test_money.py)."""
+"""Pruebas del dinero y la estación (python tests/test_money.py)."""
 import os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -17,3 +17,13 @@ for bad in [{"type": "give_money", "qty": -5}, {"type": "give_money"}]:
     except ValueError:
         pass
 print("ok dinero")
+
+# Estación (validado 28-oct: nieve tras salir de un edificio)
+assert bridge.season_command("invierno") == "SAVE;W 0x223b542 01;W 0x223b538 03"
+assert bridge.season_command("1") == "SAVE;W 0x223b542 01;W 0x223b538 01"
+assert bridge.season_command("real") == "SAVE;W 0x223b542 00"
+try:
+    bridge.season_command("monzón"); raise SystemExit("debía fallar")
+except ValueError:
+    pass
+print("ok estación")

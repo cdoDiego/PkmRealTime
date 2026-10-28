@@ -49,7 +49,7 @@ class EventIn(BaseModel):
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
                   "give_pokemon", "give_egg", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money",
+                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
@@ -87,6 +87,7 @@ class EventIn(BaseModel):
     zone: Optional[str] = None       # teleport: ciudad (aspertia, castelia...) o número de zona
     x: Optional[int] = None          # teleport: casilla (opcional, con z)
     z: Optional[int] = None
+    season: Optional[str] = None     # set_season: spring/summer/autumn/winter (primavera/verano/otoño/invierno) o 0-3
     hatch_cycles: Optional[int] = None   # give_egg / set_egg_cycles: ciclos para eclosionar (0-255; 0 = casi ya)
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
 
@@ -204,6 +205,8 @@ def build_commands(ev: Event) -> str:
         raise ValueError("en combate se escribe en la estructura de batalla (fase 5)")
     if d["type"] in ("give_money", "take_money", "set_money"):
         return money_commands(d)
+    if d["type"] == "set_season":
+        return season_command(str(need(d, "season")))
     if d["type"] == "give_pokemon" and d.get("destination") == "party":   # con la orden del juego (guion propio)
         if d["moves"] or d["nature"] is not None:
             raise ValueError("al equipo no se pueden elegir movimientos ni naturaleza (los decide el juego); usa destination box1")
@@ -423,6 +426,25 @@ def money_commands(d: dict) -> str:
     new = max(0, min(new, config.MAX_MONEY))   # el juego no pasa de 9.999.999 ni baja de 0
     addr = game["party_addr"] - config.PARTY_PTR_OFF + config.MISC_PTR_OFF
     return f"SAVE;G {addr:#x} {misc_raw[:4].hex()} {struct.pack('<I', new).hex()}"
+
+
+SEASONS = {"spring": 0, "summer": 1, "autumn": 2, "winter": 3, "primavera": 0, "verano": 1, "otoño": 2, "invierno": 3}
+
+
+def season_command(season: str) -> str:
+    """Estación del mapa. Al cambiar de mapa el juego compara su estación (GameData + 0x1C8) con la del reloj (el mes)
+    y, si no coinciden, pone la del reloj; salvo que esté activa la sincronización forzada (GameData + 0x1D2, la que
+    se usa al jugar conectado con otro jugador), así que la activamos. "real" la desactiva y vuelve la del reloj.
+    El cambio se ve al cambiar de mapa (p. ej. salir de un edificio). La marca no se guarda: al cargar la partida
+    vuelve la estación del reloj."""
+    addr = game["party_addr"] - config.PARTY_PTR_OFF + config.SEASON_PTR_OFF
+    force = addr + config.SEASON_FORCE_OFF
+    if season.lower() in ("real", "reloj", "auto"):
+        return f"SAVE;W {force:#x} 00"
+    value = int(season) if season.isdigit() else SEASONS.get(season.lower())
+    if value is None or not 0 <= value <= 3:
+        raise ValueError(f"estación desconocida: {season} (válidas: spring, summer, autumn, winter, 0-3 o real)")
+    return f"SAVE;W {force:#x} 01;W {addr:#x} {value:02x}"
 
 
 def update_bag(hexdata: str) -> None:

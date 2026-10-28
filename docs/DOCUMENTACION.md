@@ -88,6 +88,7 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | `ServerControl_CheckFainted` | `0x021A8A64` | código | Decide si un combatiente se debilita (`r1` = copia real) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 | `sItemEventAddTable` | `0x021D8F68` | 171 × {u32 objeto, función} | Objetos con efecto en combate; cada función es `movs r1,#n; str r1,[r0]; ldr r0,=tabla; bx lr` (nº de efectos y su tabla) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ usado 28-oct |
 | Lista de efectos del combate | `0x021DB1D4` (+ huecos libres en `0x021DB1E0`) | u32 profundidad, primera entrada, nº en uso | Efectos registrados (habilidades, objetos...), por prioridad. Entradas de `0x3C` bytes | pokebw2 `battle_event.c` (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 28-oct |
+| Estación y sincronización forzada (`GameData`) | puntero + `0x36834` (estación) y `+ 0x0A` (marca) | u8 + u8 | Estación (0 primavera, 1 verano, 2 otoño, 3 invierno) en `GameData + 0x1C8`; marca de sincronización forzada en `GameData + 0x1D2` | Código Action Replay "Season Changing" (documentos de Volt White 2) + pokebw2 `GameData_GetSeasons` | ✅ escrito 28-oct (nieve en octubre) |
 
 Leyenda: ✅ validado en el juego · 🟡 encontrado, falta confirmar algo · ⚪ pendiente.
 
@@ -621,6 +622,10 @@ Eventos disponibles:
 - `/state`: cada Pokémon (equipo y combate) muestra también `shiny`, `gender`, `form`, `ability` y `hidden_ability`.
 - `give_money` / `take_money` / `set_money`: dinero (`qty`). No baja de 0 ni pasa de 9.999.999. Con el personaje libre.
   `/state` muestra `money` y `badges` (número de medallas).
+- `set_season`: estación del mapa (`season`: `spring`/`summer`/`autumn`/`winter`, en español, o 0-3; `real` vuelve a la
+  del reloj). Se ve al cambiar de mapa (salir de un edificio). Al cambiar de mapa el juego pone la estación del mes
+  (`GameData_GetSeasons`) salvo con la sincronización forzada activa (la de jugar conectado), que el evento enciende.
+  La marca no se guarda: al cargar la partida vuelve la estación del reloj.
 - `teleport`: `zone` = ciudad (`aspertia`, `virbank`, `castelia`, `nimbasa`, `driftveil`, `mistralton`, `icirrus`, `opelucid`,
   `lacunosa`, `undella`, `humilau`, `nacrene`, `striaton`, `accumula`, `nuvema`, `pokemon_league`, `victory_road`, `black_city`,
   `white_forest`) o número de zona: al punto de aterrizaje de Vuelo (zonas de `RESPAWN_ZONE_INFO`, `src/ov012/respawn_zone.c`).
@@ -698,6 +703,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Eclosión rápida (`hatch_cycles`, `set_egg_cycles`) validada. |
 | 28-oct | Análisis de compatibilidad con romhacks y randomizers; plan anotado en la sección 6 (firmas de código, búsqueda de direcciones, prueba con UPR ZX, límites desde la ROM). |
 | 28-oct | **Volt White 2 validado:** mismo código que White 2 (`tools/rom_compare.py`), datos leídos con `rom.py`. Guiones en cola en el Lua; huevo rápido por especie; texto PK/MN. |
+| 28-oct | Estación (`set_season`) validada: escribir solo el byte no basta (al cambiar de mapa vuelve la del reloj); con la sincronización forzada encendida se vio nieve en octubre. |
 
 ---
 
@@ -779,6 +785,10 @@ o si la memoria cambió entre la lectura y la escritura.
 
 ### Dinero (en el juego)
 - [x] `give_money` 1000: ₽7188 → ₽8188 en la Tarjeta de Entrenador; guardar y reiniciar lo conserva.
+
+### Estación (en el juego)
+- [x] `set_season` invierno en octubre: al salir de un edificio, nieve.
+- [ ] `set_season` `real`: al salir de un edificio vuelve el verano (con el cartel de cambio de estación).
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
