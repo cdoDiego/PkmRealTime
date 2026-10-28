@@ -80,7 +80,8 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Mochila | puntero + `0x18D20` | `0x998` bytes | 5 bolsillos sin cifrar (ver abajo). En la prueba: `0x0221DA24` | Volcados + PKHeX (`PlayerBag5B2W2`) | ✅ leída y escrita 27-oct |
 | Estado de combate | `0x021B5178` | u16 | `0x2100` o `0x2101` = en combate | Tracker (`battleStatus`, W2) | ✅ validado 25-oct |
 | Bandera de control libre | `0x0223B2F5` | u8 | `0` = caminando libre; `1` = menú, diálogo, equipo, datos, mochila, combate | `ram_tool.py diff` + `watch_ram.lua` | ✅ validado 26-oct (también tras reiniciar el juego) |
-| Variable del buzón | — | — | Para pasar mensajes al juego | — | ⚪ por buscar |
+| Dinero y medallas (bloque Misc) | puntero + `0x21A20` | u32 + u8 | Dinero (tope 9.999.999) y medallas (un bit cada una, en `+4`). Bloque Misc del save (`0x21100`) | PKHeX (`Misc5`) + tracker (`badges` = `0x21A24`) | ✅ leído y escrito 27-oct (₽7188 → ₽8188, se conserva al guardar) |
+| Variable del buzón | — | — | Idea inicial para pasar mensajes al juego | — | ➖ ya no hace falta: los guiones propios (`S`) cubren ese uso |
 | `FieldStatus_GetReserveScript` | `0x0201936C` | código | Lee el guion reservado (`FieldStatus` + `0x12`, u16) | pokebw2 (B2 `0x02019340` + `0x2C`) | ✅ usado 27-oct (combates forzados) |
 | `FieldScript_AttachOpcodeGuard` | `0x02153DC8` | código | Se llama al crear la máquina de un guion (`r0` = VM, `pc` en `+0x20`) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 | Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 arena, 4 granizo) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
@@ -371,7 +372,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 
 | Dirección | Mensaje |
 | --- | --- |
-| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate>` (equipo, mochila, caja y jugador van como `-` en combate; combate va como `-` fuera de él) |
+| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él) |
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
@@ -544,6 +545,8 @@ Eventos disponibles:
 - `battle_set_weather` (experimental): clima del combate (`none`, `sun`, `rain`, `sandstorm`, `hail`), con `turns` opcional
   (sin `turns` no se acaba). Se anima con el mensaje del juego al reproducirse el turno; con `none` sale el de fin del clima.
   `/state` lo muestra en `battle.weather`.
+- `give_money` / `take_money` / `set_money`: dinero (`qty`). No baja de 0 ni pasa de 9.999.999. Con el personaje libre.
+  `/state` muestra `money` y `badges` (número de medallas).
 - `start_wild_battle`: combate salvaje contra `species` de nivel `level` (por defecto 5), en cualquier sitio del mapa (no hace falta
   hierba). Espera a que el personaje esté libre.
 - `start_trainer_battle`: combate contra el entrenador `trainer` (1-813 en W2; la lista sale de la ROM: `a/0/9/1`), aunque ya lo
@@ -594,6 +597,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 27-oct | Sueño y envenenamiento grave validados en el juego (combate contra entrenadora). El contador del sueño incluye el turno en que despierta: `turns` ahora significa turnos sin atacar. |
 | 27-oct | Fase 5 validada completa: entrenador con varios Pokémon (banco incluido) y combate doble. |
 | 27-oct | **Combates forzados:** guion reservado (`FieldStatus` + `0x12`) + nuestros bytes encima del guion cargado (avisos de ejecución). Combate salvaje fuera de la hierba y contra entrenador validados. Clima del mapa (se pierde al volver del combate; opción `persist`) y clima del combate (`sField` + `WEATHER_START`) validados. Desplazamientos W2/B2: `+0x2C` código principal, `+0x40` overlays. |
+| 27-oct | Dinero en el bloque Misc (puntero + `0x21A20`, no en MyStatus). `give_money`/`take_money`/`set_money` validados; persiste al guardar. La variable del buzón queda descartada: los guiones propios la sustituyen. |
 
 ---
 
@@ -667,6 +671,9 @@ o si la memoria cambió entre la lectura y la escritura.
   correcta; vida 0 a un rival: se debilita solo él y el combate sigue con el otro.
 
 
+### Dinero (en el juego)
+- [x] `give_money` 1000: ₽7188 → ₽8188 en la Tarjeta de Entrenador; guardar y reiniciar lo conserva.
+
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
 - [x] `start_trainer_battle` 165 (Chica): transición de entrenador, sacó un Purrloin, vuelta normal al mapa. Esperó a que se
@@ -678,5 +685,4 @@ o si la memoria cambió entre la lectura y la escritura.
 - [ ] Combate contra entrenador doble (tipo de combate 1) y perder un combate forzado (debe volver al Centro Pokémon).
 
 ### Por buscar
-- [ ] **Variable del buzón** (ver siguiente paso).
 - [ ] Fase 5: validar las direcciones de combate del tracker.

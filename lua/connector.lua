@@ -18,6 +18,8 @@ local BOX1_PTR_OFF = 0xD20            -- caja 1 (30 huecos de 136 bytes)
 local BOX1_SIZE = 0xFF0
 local TRAINER_PTR_OFF = 0x19D20       -- datos del jugador
 local TRAINER_SIZE = 0x24
+local MISC_PTR_OFF = 0x21A20          -- dinero (u32) y medallas (u8 en +4): bloque Misc del save (0x21100)
+local MISC_SIZE = 8
 local HEADER_OFF = 0x3FFE00           -- copia de la cabecera del cartucho en Main RAM
 local BATTLE_TABLE_PTR_OFF = 0x526A8  -- tabla de la copia "visual" de los combatientes (tracker: mainBattleDataPtr)
 local BATTLE_SERVER_PTR_OFF = 0x52790 -- tabla de la copia "real", la que decide el combate (volcado combate1)
@@ -315,13 +317,14 @@ while true do
     local game = GAMES[code]
     local addr, n = party_location()
     local mode = game_mode(game, addr)
-    local party, bag, box, trainer, battle = "-", "-", "-", "-", "-"
+    local party, bag, box, trainer, battle, misc = "-", "-", "-", "-", "-", "-"
     if addr ~= nil and mode ~= "battle" then
       local ptr = addr - PARTY_PTR_OFF
       party = read_hex(addr, n * PARTY_SLOT_SIZE)
       bag = read_hex(ptr + BAG_PTR_OFF, BAG_SIZE)
       box = read_hex(ptr + BOX1_PTR_OFF, BOX1_SIZE)
       trainer = read_hex(ptr + TRAINER_PTR_OFF, TRAINER_SIZE)
+      misc = read_hex(ptr + MISC_PTR_OFF, MISC_SIZE)
     elseif addr ~= nil and mode == "battle" then
       battle = battle_hex(addr - PARTY_PTR_OFF, game)
     end
@@ -335,8 +338,8 @@ while true do
     end
     if faint_hook and faint_count() == 0 then faint_unhook() end   -- fuera del aviso, no desde dentro
     if script_hooks and pending_script == nil then script_unhook() end
-    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s", mode, addr or 0, party, bag, box, trainer,
-                                        code:gsub("[^%w]", "_"), crc, battle))
+    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s", mode, addr or 0, party, bag, box, trainer,
+                                        code:gsub("[^%w]", "_"), crc, battle, misc))
     handle(comm.socketServerResponse())
     gui.text(4, 4, "puente: " .. mode)
     if game == nil then gui.text(4, 20, "juego no soportado: " .. code .. " (no se escribe nada)") end

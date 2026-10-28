@@ -48,7 +48,8 @@ class EventIn(BaseModel):
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "give_item", "take_item",
                   "give_pokemon", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "start_wild_battle", "start_trainer_battle", "set_weather",
+                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "give_money", "take_money", "set_money",
+                  "start_wild_battle", "start_trainer_battle", "set_weather",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
@@ -58,7 +59,7 @@ class EventIn(BaseModel):
     item: Optional[int] = None       # set_item: nº de objeto (0 = quitar)
     move: Optional[int] = None       # set_move: nº de movimiento
     move_slot: Optional[int] = None  # set_move: hueco 0-3
-    qty: Optional[int] = None        # give_item / take_item (take_item sin qty = todas)
+    qty: Optional[int] = None        # give_item / take_item (sin qty = todas); give/take/set_money: cantidad
     species: Optional[int] = None    # give_pokemon: nº de Pokédex (1-649)
     level: Optional[int] = None      # give_pokemon: 1-100 (por defecto 5)
     moves: Optional[list[int]] = None  # give_pokemon: 1-4 movimientos (por defecto, los de su nivel)
@@ -96,12 +97,14 @@ events: dict[int, Event] = {}
 queue: list[int] = []
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
+        "money": None, "badges": None,
         "connected": False, "updated": 0.0}
 NEEDS_DATA = {"heal", "set_move", "give_pokemon"}   # usan datos de la ROM (PP, especies, movimientos)
 party_raw: list[bytes] = []
 bag_raw: bytes = b""
 box_raw: bytes = b""
 trainer_raw: bytes = b""
+misc_raw: bytes = b""          # dinero y medallas
 in_flight: Optional[int] = None
 ws_clients: set[WebSocket] = set()
 
@@ -170,6 +173,8 @@ def build_commands(ev: Event) -> str:
         raise ValueError("en combate se escribe en la estructura de batalla (fase 5)")
     if d["type"] in ("give_item", "take_item"):
         return bag_commands(d)
+    if d["type"] in ("give_money", "take_money", "set_money"):
+        return money_commands(d)
     if d["type"] == "give_pokemon":
         return gift_commands(d)
     if d["type"] == "heal" and "slot" not in d["target"]:
@@ -346,6 +351,28 @@ def update_box(hexbox: str, hextrainer: str) -> None:
         trainer_raw = t
 
 
+def update_misc(hexdata: str) -> None:
+    global misc_raw
+    raw = bytes.fromhex(hexdata) if hexdata not in ("", "-") else b""
+    if len(raw) == config.MISC_SIZE:
+        misc_raw = raw
+        game["money"] = struct.unpack_from("<I", raw, 0)[0]
+        game["badges"] = bin(raw[4]).count("1")
+
+
+def money_commands(d: dict) -> str:
+    if len(misc_raw) != config.MISC_SIZE:
+        raise ValueError("todavía no se ha leído el dinero")
+    qty = int(need(d, "qty"))
+    if qty < 0:
+        raise ValueError("qty no puede ser negativo")
+    now = struct.unpack_from("<I", misc_raw, 0)[0]
+    new = {"give_money": now + qty, "take_money": now - qty, "set_money": qty}[d["type"]]
+    new = max(0, min(new, config.MAX_MONEY))   # el juego no pasa de 9.999.999 ni baja de 0
+    addr = game["party_addr"] - config.PARTY_PTR_OFF + config.MISC_PTR_OFF
+    return f"SAVE;G {addr:#x} {misc_raw[:4].hex()} {struct.pack('<I', new).hex()}"
+
+
 def update_bag(hexdata: str) -> None:
     global bag_raw
     raw = bytes.fromhex(hexdata) if hexdata not in ("", "-") else b""
@@ -364,7 +391,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             if kind == "POLL":
                 mode, _, rest = rest.partition(" ")
                 addr, _, rest = rest.partition(" ")
-                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield = (rest.split(" ") + ["-"] * 6)[:6]
+                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc = (rest.split(" ") + ["-"] * 7)[:7]
                 update_game(gamefield)
                 try:
                     game["battle"] = battle.parse(battlefield) if mode == "battle" else None
@@ -378,6 +405,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     update_party("" if hexparty == "-" else hexparty)
                     update_bag(hexbag)
                     update_box(hexbox, hextrainer)
+                    update_misc(hexmisc)
                 # BizHawk 2.6.2+ solo lee respuestas "<longitud> <mensaje>"; sin eso se bloquea esperando
                 payload = next_commands().encode()
                 writer.write(str(len(payload)).encode() + b" " + payload)

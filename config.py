@@ -33,6 +33,9 @@ BOX_SLOTS = 30
 
 TRAINER_PTR_OFF = 0x19D20    # datos del jugador (MyStatus): nombre, TID/SID, idioma, juego, género
 TRAINER_SIZE = 0x24
+MISC_PTR_OFF = 0x21A20       # bloque Misc del save (0x21100): dinero u32, medallas u8 en +4
+MISC_SIZE = 8
+MAX_MONEY = 9_999_999
 # La RAM es una copia del save desplazada: RAM = puntero + 0x920 + offset en el save de B2W2
 # (mochila 0x18400, equipo 0x18E00, jugador 0x19400, cajas 0x400). Validado con volcados.
 
