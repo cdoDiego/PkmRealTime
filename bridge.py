@@ -4,7 +4,8 @@ Ejecutar:  pip install fastapi uvicorn
            python bridge.py
 
 Protocolo con Lua (texto, una petición por mensaje):
-  Lua -> Python:  "POLL <modo> <dir. equipo 0x...> <hex equipo|-> <hex mochila|-> <hex caja 1|-> <hex jugador|-> <código:crc> <combate|->"
+  Lua -> Python:  "POLL <modo> <dir. equipo 0x...> <hex equipo|-> <hex mochila|-> <hex caja 1|-> <hex jugador|-> <código:crc> <combate|->
+                   <hex dinero|-> <compatibilidad: faint=1,inject=?,...|->"   (1 = código esperado, 0 = distinto, ? = sin ver)
   Python -> Lua:  comandos separados por ";"  (vacío = nada que hacer)
      W <addr> <hex>              escribe bytes
      G <addr> <hex_esperado> <hex_nuevo>   escribe solo si la memoria coincide
@@ -108,7 +109,7 @@ queue: list[int] = []
 pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos de esa especie que ya había
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
-        "money": None, "badges": None,
+        "money": None, "badges": None, "compat": {},
         "connected": False, "updated": 0.0}
 NEEDS_DATA = {"heal", "set_move", "give_pokemon"}   # usan datos de la ROM (PP, especies, movimientos)
 party_raw: list[bytes] = []
@@ -147,6 +148,7 @@ def build_commands(ev: Event) -> str:
     if d["type"] in FIELD_SCRIPT_EVENTS:   # guiones propios: el juego los ejecuta con el personaje libre en el mapa
         if game["mode"] == "battle":
             raise ValueError("no se puede durante un combate")
+        require_compat("script")
         if d["type"] == "start_wild_battle":
             return "SAVE;S " + field_script.wild_battle(int(need(d, "species")), int(d["level"] or 5), int(d.get("form") or 0),
                                                         True if d["shiny"] else None, d["hidden_ability"], d["gender"],
@@ -178,22 +180,27 @@ def build_commands(ev: Event) -> str:
         if game["mode"] != "battle":
             raise ValueError("no hay combate en curso")
         if d["type"] == "battle_set_weather":
+            require_compat("weather")
             return "SAVE;" + battle.set_weather_command(str(need(d, "weather")), d.get("turns"))
+        show = d.get("show", True) and game["compat"].get("inject") is not False   # sin pantalla si el código no es el esperado
         side = d["target"].get("side", "enemy")
         if side not in ("player", "enemy"):
             raise ValueError("side debe ser 'player' o 'enemy'")
         slot = int(d["target"].get("slot", 0))
         if d["type"] == "battle_set_hp":
+            if int(need(d, "hp")) == 0:
+                require_compat("faint")
             cmds = "SAVE;" + battle.set_hp_command(side, slot, int(need(d, "hp")))
-            return cmds + (";" + battle.show_hp_command(side, slot) if d.get("show", True) else "")
+            return cmds + (";" + battle.show_hp_command(side, slot) if show else "")
         if d["type"] == "battle_set_stage":
             return "SAVE;" + battle.set_stage_command(side, slot, str(need(d, "stat")), d["stage"], d["delta"])
         if d["type"] == "battle_set_item":
+            require_compat("item")
             return "SAVE;" + battle.set_item_command(side, slot, int(need(d, "item")))
         if d["type"] == "battle_set_pp":
             return "SAVE;" + battle.set_pp_command(side, slot, int(need(d, "move_slot")), d["pp"])
         cmds = "SAVE;" + battle.set_status_command(side, slot, str(need(d, "status")), d.get("turns"))
-        return cmds + (";" + battle.show_status_command(side, slot, d["status"]) if d.get("show", True) else "")
+        return cmds + (";" + battle.show_status_command(side, slot, d["status"]) if show else "")
     if d["type"] in NEEDS_DATA and not game["data_ok"]:
         raise ValueError("gen5_data.json no es de la ROM que se está jugando: configura ROM_PATH en config_local.py "
                          "o ejecuta  python rom.py <ruta.nds>  y reinicia el puente")
@@ -208,6 +215,7 @@ def build_commands(ev: Event) -> str:
     if d["type"] == "set_season":
         return season_command(str(need(d, "season")))
     if d["type"] == "give_pokemon" and d.get("destination") == "party":   # con la orden del juego (guion propio)
+        require_compat("script")
         if d["moves"] or d["nature"] is not None:
             raise ValueError("al equipo no se pueden elegir movimientos ni naturaleza (los decide el juego); usa destination box1")
         return "SAVE;S " + field_script.give_pokemon(int(need(d, "species")), int(d["level"] or 5), int(d.get("form") or 0),
@@ -279,6 +287,27 @@ def apply_change(d: dict, old: bytes) -> bytearray:
     if t == "set_move":
         return pk5.set_move(old, int(need(d, "move_slot")), int(need(d, "move")))
     raise ValueError(f"tipo no implementado: {t}")
+
+
+# Funciones que dependen de código del juego en una dirección fija (el Lua comprueba sus bytes; ver "sigs" en connector.lua)
+COMPAT_NAMES = {"faint": "debilitar (vida 0 en combate)", "inject": "actualizar la pantalla del combate",
+                "item": "objeto en combate", "weather": "clima del combate", "script": "guiones propios (combates forzados, "
+                "clima del mapa, teletransporte, regalos al equipo, huevos)"}
+
+
+def parse_compat(field: str) -> dict:
+    """'faint=1,item=?' -> {"faint": True, "item": None}"""
+    out = {}
+    for part in field.split(",") if field != "-" else []:
+        name, _, v = part.partition("=")
+        out[name] = {"1": True, "0": False}.get(v)
+    return out
+
+
+def require_compat(feature: str) -> None:
+    if game["compat"].get(feature) is False:
+        raise ValueError(f"{COMPAT_NAMES[feature]}: desactivado, el código de este juego no es el esperado "
+                         "(¿romhack?); ver 'compat' en /state")
 
 
 def need(d: dict, key: str):
@@ -465,8 +494,9 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             if kind == "POLL":
                 mode, _, rest = rest.partition(" ")
                 addr, _, rest = rest.partition(" ")
-                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc = (rest.split(" ") + ["-"] * 7)[:7]
+                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc, compatfield = (rest.split(" ") + ["-"] * 8)[:8]
                 update_game(gamefield)
+                game["compat"] = parse_compat(compatfield)
                 if mode != "battle":
                     battle.RAW.clear()   # sin datos viejos: el siguiente combate espera a tener los suyos
                 try:

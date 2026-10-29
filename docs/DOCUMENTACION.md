@@ -396,7 +396,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 
 | Dirección | Mensaje |
 | --- | --- |
-| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él) |
+| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc> <compat>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6) |
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
@@ -515,22 +515,36 @@ habilidades, objetos, entrenadores) y se comprueba que sean de la ROM que se jue
 | Romhack que solo cambia datos | Igual que el randomizer. **Volt White 2 (Drayano) validado el 28-oct**, ver abajo. |
 | Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse; además hay límites fijos (649 especies de reserva, 638 objetos en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, `field_script`, listas de `bag.py`). |
 
-**Riesgo actual:** el Lua no comprueba que en cada dirección siga el código esperado; con un hack que lo mueva escribiría a ciegas
-(cuelgue o partida corrupta).
+**Firmas de código (28-oct):** antes de usar una dirección de código, el Lua comprueba que ahí estén los bytes del juego
+original (`sigs` en `GAMES` de `connector.lua`, sacados de la ROM). Así un hack que mueva el código no hace que se escriba a
+ciegas (cuelgue o partida corrupta): solo se desactiva esa función.
+
+| Función (`compat`) | Qué comprueba | Cuándo (overlay cargado) | Si no coincide |
+| --- | --- | --- | --- |
+| `faint` | inicio de `ServerControl_CheckFainted` | en combate (overlay 167) | `battle_set_hp` con vida 0 falla |
+| `inject` | inicio de la función del cliente + puntero a `sAdapters` | en combate | se cambia el dato sin actualizar la pantalla (`show` se ignora) |
+| `item` | punteros a `sItemEventAddTable` y a la lista de efectos | en combate | `battle_set_item` falla |
+| `weather` | puntero a `sField` | en combate | `battle_set_weather` falla |
+| `script` | `FieldStatus_GetReserveScript` (arm9) + `FieldScript_AttachOpcodeGuard` (overlay 12) | en el mapa; y otra vez justo al ejecutarse | combates forzados, clima del mapa, teletransporte, regalo al equipo y huevos fallan |
+
+- Cada función queda `true` (código esperado), `false` (distinto) o `null` (aún no comprobada: su overlay no ha estado en
+  memoria, p. ej. las de combate hasta el primer combate). Un acierto se queda para toda la sesión.
+- Se ve en `/state` (`"compat"`), en pantalla ("desactivado (código distinto): ...") y en el error del evento.
+- Lo que no es código (equipo, mochila, caja, dinero, estación, estructura de combate) va por el puntero base y los offsets del
+  save; las variables de modo (`battle`, `menu`) no se pueden firmar.
+- `python tools/rom_compare.py original.nds hack.nds` revisa las mismas firmas en el archivo del hack sin jugar.
 
 Plan:
-- [ ] **1. Firmas antes de usar cada dirección (prioritario):** guardar en `GAMES` los primeros bytes esperados de cada función o
-  tabla (sacarlos de un volcado del juego original) y compararlos al arrancar el Lua. Si no coinciden, desactivar solo esa función
-  (F, S, I, comandos de pantalla...) y avisar en pantalla y en `/state` (p. ej. `"compat": {"forced_battles": false}`), y que el
-  puente rechace esos eventos con un mensaje claro.
+- [x] **1. Firmas antes de usar cada dirección:** hecho (arriba). Validado con la ROM original y con Volt White 2 (todas
+  coinciden, también en la RAM del juego en el mapa).
 - [ ] **2. Buscar las direcciones si se movieron:** mismo método que `tools/symbol_offset.py` (buscar la firma en la RAM o en la
   ROM); también sirve para Black 2.
 - [ ] **3. Probar con un randomizer:** ROM de White 2 randomizada con UPR ZX; revisar `/state` (nombres, PP), regalos, combate
   forzado salvaje y contra entrenador, `battle_set_item`, huevos.
 - [ ] **5. Redux** (Blaze Black 2 / Volt White 2 Redux): cambia mucho más; pasarle antes `tools/rom_compare.py` y hacer el paso 1.
 
-**Herramienta:** `python tools/rom_compare.py <original.nds> <hack.nds>` compara overlays y el arm9 descomprimido (BLZ) y avisa
-si alguna zona cambiada toca una dirección que usa `connector.lua`.
+**Herramienta:** `python tools/rom_compare.py <original.nds> <hack.nds>` compara overlays y el arm9 descomprimidos (BLZ), avisa
+si alguna zona cambiada toca una dirección que usa `connector.lua` y revisa las firmas en el hack.
 
 **Volt White 2 (28-oct, ROM "Complete", cartucho `IRDO`, CRC de cabecera `0a06`):**
 - Código: las 344 overlays idénticas (combate 167, mapa 12 y 36 incluidos); en el arm9, 7 zonas pequeñas (277 bytes), ninguna en
@@ -553,7 +567,7 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
-| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`) y combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) |
+| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`), combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) y `compat` (qué funciones tienen el código esperado; sección 6) |
 | `POST` | `/events` | Encola un evento. Devuelve su `id` |
 | `GET` | `/events` | Lista todos los eventos |
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
@@ -704,6 +718,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Análisis de compatibilidad con romhacks y randomizers; plan anotado en la sección 6 (firmas de código, búsqueda de direcciones, prueba con UPR ZX, límites desde la ROM). |
 | 28-oct | **Volt White 2 validado:** mismo código que White 2 (`tools/rom_compare.py`), datos leídos con `rom.py`. Guiones en cola en el Lua; huevo rápido por especie; texto PK/MN. |
 | 28-oct | Estación (`set_season`) validada: escribir solo el byte no basta (al cambiar de mapa vuelve la del reloj); con la sincronización forzada encendida se vio nieve en octubre. |
+| 28-oct | Firmas de código: el Lua comprueba los bytes de cada función antes de usarla y desactiva solo la que no coincida (`compat` en `/state`); `rom_compare.py` descomprime los overlays y revisa las firmas en el hack. |
 
 ---
 
@@ -791,6 +806,11 @@ o si la memoria cambió entre la lectura y la escritura.
 - [x] `set_season` `real`: al salir de un edificio vuelve el verano.
 - [x] `set_season` otoño y primavera: cambian el paisaje y las condiciones del mapa. No sale el cartel de cambio de
   estación (normal: con la sincronización forzada el juego no compara con el reloj, que es quien muestra el cartel).
+
+### Firmas de código (en el juego)
+- [x] En el mapa: bytes de `reserve_get` y `script_vm` iguales en la RAM.
+- [x] Con el Lua recargado, en un combate salvaje: `compat` con las cinco funciones en `true`; quemadura al rival (con ícono)
+  y lluvia siguen funcionando.
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.

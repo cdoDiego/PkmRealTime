@@ -37,7 +37,21 @@ local GAMES = {
            battle_field = 0x021DD928,                           -- sField: clima del combate (B2 + 0x40)
            item_table = 0x021D8F68,                             -- sItemEventAddTable (B2 + 0x40)
            event_list = 0x021DB1D4,                             -- lista de efectos registrados (B2 0x021DB194 + 0x40)
-           event_pool = 0x021DB1E0 },                           -- huecos libres de esa lista (B2 0x021DB1A0 + 0x40)
+           event_pool = 0x021DB1E0,                             -- huecos libres de esa lista (B2 0x021DB1A0 + 0x40)
+           -- Firmas: bytes que debe haber en el código (sacados de la ROM original). Si un romhack mueve el código, no
+           -- coinciden y esa función se desactiva en vez de escribir a ciegas. Los overlays solo están en memoria en su
+           -- modo: el 167 en combate y el 12 en el mapa (el arm9, siempre). Las tablas de datos se comprueban con la
+           -- palabra del código que apunta a ellas (p. ej. en 0x021D4A78 está el puntero a sAdapters).
+           sigs = {
+             faint   = { mode = "battle", { 0x021A8A64, "f8b582b00f1c041c381c12f0" } },             -- check_fainted
+             inject  = { mode = "battle", { 0x021B1A14, "70b582b0041c211c" },                       -- client_proc
+                                          { 0x021D4A78, "acd81d02" } },                             -- -> adapters
+             item    = { mode = "battle", { 0x021C2784, "688f1d02" },                               -- -> item_table
+                                          { 0x021BC734, "d4b11d02" }, { 0x021BC730, "e0b11d02" } }, -- -> event_list/pool
+             weather = { mode = "battle", { 0x021D59E8, "28d91d02" } },                             -- -> battle_field
+             script  = { mode = "map",    { 0x0201936C, "408a7047" },                               -- reserve_get
+                                          { 0x02153DC8, "10b5041cc1f606fe01f0ecf9" } },             -- script_vm
+           } },
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
 
@@ -79,6 +93,41 @@ local function game_id()
   local code = ""
   for i = 0, 3 do code = code .. string.char(memory.read_u8(HEADER_OFF + 0x0C + i, DOMAIN)) end
   return code, memory.read_u16_le(HEADER_OFF + 0x15E, DOMAIN)
+end
+
+-- Compatibilidad de cada función: true = el código es el esperado, false = distinto (se desactiva), nil = sin comprobar
+-- aún (su overlay no ha estado en memoria). Un acierto se queda: el código de la ROM no cambia durante la partida.
+local compat = {}
+local current_mode = "unknown"
+
+local function check_sig(game, feature)
+  local sig = game.sigs and game.sigs[feature]
+  if sig == nil then return nil end
+  if compat[feature] or sig.mode ~= current_mode then return compat[feature] end
+  local ok = true
+  for _, pair in ipairs(sig) do
+    if read_hex(pair[1], #pair[2] / 2) ~= pair[2] then ok = false; break end
+  end
+  compat[feature] = ok
+  return ok
+end
+
+local function compat_field(game)
+  if game == nil or game.sigs == nil then return "-" end
+  local t = {}
+  for _, f in ipairs({ "faint", "inject", "item", "weather", "script" }) do
+    local v = check_sig(game, f)
+    t[#t + 1] = f .. "=" .. (v == nil and "?" or (v and "1" or "0"))
+  end
+  return table.concat(t, ",")
+end
+
+-- Para las órdenes: falla con un mensaje claro si el código no es el esperado
+local function require_sig(game, feature, op)
+  if check_sig(game, feature) == false then
+    return false, op .. ": desactivado, el código de este juego no es el esperado (¿romhack?)"
+  end
+  return true
 end
 
 local function game_mode(game, party_addr)
@@ -137,6 +186,9 @@ local function battle_client(game)
 end
 
 local function try_inject(game)
+  if check_sig(game, "inject") == false then
+    inject_status = "descartado: el código de este juego no es el esperado"; pending_inject = nil; return
+  end
   local a, c = battle_client(game)
   if c == nil then return end
   if memory.read_u8(off(c + 0x1B0), DOMAIN) ~= 1 or memory.read_u16_le(off(a + 0x10), DOMAIN) ~= 8 then return end
@@ -210,6 +262,14 @@ end
 
 local function on_script_vm()
   if script_stage ~= "reservado" then return end
+  local game = GAMES[game_id()]
+  local sig = game and game.sigs and game.sigs.script and game.sigs.script[2]
+  if sig and read_hex(sig[1], #sig[2] / 2) ~= sig[2] then    -- aquí se está ejecutando otro código: no tocar nada
+    compat.script = false
+    pending_script, script_stage = nil, ""
+    script_status = "cancelado: el código de este juego no es el esperado"
+    return
+  end
   local vm = emu.getregisters()["ARM9 r0"]
   local pc = vm and memory.read_u32_le(off(vm + 0x20), DOMAIN)
   if pc == nil or pc < BASE or pc >= BASE + 0x400000 then return end
@@ -327,6 +387,10 @@ local function run(cmd)
     memory.write_bytes_as_array(off(tonumber(a)), from_hex(c), DOMAIN)
     return true, "G " .. a
   elseif op == "J" then                         -- inyectar comandos de combate en el siguiente turno
+    local game = GAMES[game_id()]
+    if game == nil then return false, "J: juego no soportado" end
+    local ok, err = require_sig(game, "inject", "J")
+    if not ok then return false, err end
     local extra = from_hex(a)
     pending_inject = pending_inject or {}         -- si ya había algo pendiente, se acumula
     for i = 1, #extra do pending_inject[#pending_inject + 1] = extra[i] end
@@ -335,6 +399,8 @@ local function run(cmd)
   elseif op == "F" then                         -- debilitar cuando el juego revise a este combatiente
     local game = GAMES[game_id()]
     if game == nil or game.check_fainted == nil then return false, "F: falta check_fainted para este juego" end
+    local okc, errc = require_sig(game, "faint", "F")
+    if not okc then return false, errc end
     if not faint_hook then
       local ok, err = pcall(event.on_bus_exec, on_check_fainted, game.check_fainted, "connector_faint")
       if not ok then return false, "F: este núcleo no admite avisos de ejecución: " .. tostring(err) end
@@ -346,6 +412,8 @@ local function run(cmd)
   elseif op == "S" then                         -- ejecutar un guion propio en cuanto el personaje quede libre
     local game = GAMES[game_id()]
     if game == nil or game.reserve_get == nil then return false, "S: falta reserve_get para este juego" end
+    local okc, errc = require_sig(game, "script", "S")
+    if not okc then return false, errc end
     if not script_hooks then
       local ok1, e1 = pcall(event.on_bus_exec, on_reserve_get, game.reserve_get, "connector_reserve")
       local ok2, e2 = pcall(event.on_bus_exec, on_script_vm, game.script_vm, "connector_script")
@@ -365,6 +433,8 @@ local function run(cmd)
   elseif op == "I" then                         -- objeto en combate: I <copia real> <objeto>
     local game = GAMES[game_id()]
     if game == nil or game.event_list == nil then return false, "I: faltan direcciones para este juego" end
+    local okc, errc = require_sig(game, "item", "I")
+    if not okc then return false, errc end
     return set_battle_item(game, tonumber(a), tonumber(b))
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
@@ -415,6 +485,7 @@ while true do
     local game = GAMES[code]
     local addr, n = party_location()
     local mode = game_mode(game, addr)
+    current_mode = mode
     local party, bag, box, trainer, battle, misc = "-", "-", "-", "-", "-", "-"
     if addr ~= nil and mode ~= "battle" then
       local ptr = addr - PARTY_PTR_OFF
@@ -441,11 +512,18 @@ while true do
       script_status = string.format("esperando (%d bytes, %d más en cola)", #pending_script, #script_queue)
     end
     if script_hooks and pending_script == nil then script_unhook() end
-    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s", mode, addr or 0, party, bag, box, trainer,
-                                        code:gsub("[^%w]", "_"), crc, battle, misc))
+    local cf = compat_field(game)
+    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s", mode, addr or 0, party, bag, box, trainer,
+                                        code:gsub("[^%w]", "_"), crc, battle, misc, cf))
     handle(comm.socketServerResponse())
     gui.text(4, 4, "puente: " .. mode)
     if game == nil then gui.text(4, 20, "juego no soportado: " .. code .. " (no se escribe nada)") end
+    local off_list = {}
+    for f, v in pairs(compat) do if v == false then off_list[#off_list + 1] = f end end
+    if #off_list > 0 then
+      table.sort(off_list)
+      gui.text(4, 84, "desactivado (código distinto): " .. table.concat(off_list, ", "))
+    end
   end
   if pending_inject ~= nil then
     local g = GAMES[game_id()]
