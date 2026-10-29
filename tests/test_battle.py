@@ -24,6 +24,13 @@ b = battle.parse(f"T:00,e0:0225befc:{battler(hp=0)}:-,E0:0225cdf8:{battler(hp=3,
 e = b["enemy"][0]
 assert (e["hp"], e["hp_visual"], e["conditions"]) == (3, 0, ["paralysis"]), e
 
+# combate contra dos entrenadores: el segundo rival (cliente 3, "f"/"F") va en los índices 6-11 del rival
+b = battle.parse(f"T:00,E0:0225c120:{battler(hp=19, max_hp=19)}:-,e0:0225b224:{battler(hp=19, max_hp=19)}:-,"
+                 f"F0:0225c568:{battler(hp=20, max_hp=20)}:-,f0:0225c344:{battler(hp=20, max_hp=20)}:-")
+assert [(e["index"], e["hp"], e["hp_visual"]) for e in b["enemy"]] == [(0, 19, 19), (6, 20, 20)], b["enemy"]
+assert battle.set_hp_command("enemy", 6, 5) == "G 0x225c578 1400 0500;G 0x225c354 1400 0500"
+b = battle.parse(f"T:00,e0:0225befc:{battler(hp=0)}:-,E0:0225cdf8:{battler(hp=3, sick=1)}:-")   # vuelve al de arriba
+
 # escrituras en las dos copias, con su guarda
 assert battle.set_hp_command("enemy", 0, 1) == "G 0x225ce08 0300 0100;G 0x225bf0c 0000 0100"
 # vida 0: la copia real queda a 1 y el Lua la debilita cuando el juego la revisa; la visual pasa a 0

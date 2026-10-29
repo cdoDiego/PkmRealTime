@@ -142,6 +142,8 @@ Cada Pokémon en combate tiene **dos copias** de su estructura de combate, con e
 | **Visual** | puntero + `0x526A8` (la que lee el tracker) | Lo que se muestra; la barra de vida se anima hacia este valor cuando hay un cambio de vida |
 
 Cada tabla tiene 6 punteros del jugador (el activo primero) + un contador, y desde `+0x1C`, los del rival + su contador.
+Siguen otros dos bloques iguales: `+0x38` el compañero del jugador (combate multi) y `+0x54` el segundo rival (combate
+contra dos entrenadores, visto el 28-oct); el puente los muestra con los índices 6-11 de su lado.
 En la prueba, cada copia real estaba `0xEFC` bytes después de su visual, pero se usan las tablas, no esa distancia.
 
 **Estructura de cada combatiente** (sin cifrar):
@@ -667,7 +669,11 @@ Eventos disponibles:
   `form`, `shiny` (flag `0x02`), `gender` (`0x20` macho / `0x40` hembra), `hidden_ability` (`0x08`), `no_flee` (`0x01`).
   El objeto que lleva no se puede elegir así.
 - `start_trainer_battle`: combate contra el entrenador `trainer` (1-813 en W2; la lista sale de la ROM: `a/0/9/1`), aunque ya lo
-  hayas vencido. Si pierdes, el juego hace lo de siempre (volver al Centro Pokémon).
+  hayas vencido. Si pierdes, el juego hace lo de siempre (volver al Centro Pokémon). El tipo de combate lo decide el estilo del
+  entrenador (uno doble lucha en doble, como el 21). Con `trainer2` (y `trainer` individual) es un **combate doble contra los
+  dos a la vez**, como cuando te ven dos juntos; sus Pokémon salen en `/state` como `enemy` 0-5 (el primero) y 6-11 (el
+  segundo; el 6 es el que está en el campo), y las órdenes de combate usan esos `slot`. Falla si el equipo no tiene bastantes
+  Pokémon en condiciones (2 para un doble, 3 para un triple o rotatorio). No hay combate salvaje doble por guion.
 - `set_weather`: clima del mapa, por nombre o número: `none` 0, `snow` 1, `rain` 2, `sandstorm` 3 (arena en combate), `hail` 4
   (granizo en combate), `blizzard` 5 (granizo), `heavy_rain` 6 (lluvia), `rain_streaks` 7 (lluvia), `diamond_dust` 8, `fog` 9,
   `overcast` 10, `light_fog` 11, `heavy_sandstorm` 12 (arena), `overcast2` 13, `zone` = el de la ruta. Los que no dicen nada
@@ -728,6 +734,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | **Volt White 2 validado:** mismo código que White 2 (`tools/rom_compare.py`), datos leídos con `rom.py`. Guiones en cola en el Lua; huevo rápido por especie; texto PK/MN. |
 | 28-oct | Estación (`set_season`) validada: escribir solo el byte no basta (al cambiar de mapa vuelve la del reloj); con la sincronización forzada encendida se vio nieve en octubre. |
 | 28-oct | Firmas de código: el Lua comprueba los bytes de cada función antes de usarla y desactiva solo la que no coincida (`compat` en `/state`); `rom_compare.py` descomprime los overlays y revisa las firmas en el hack. |
+| 28-oct | Combate doble contra dos entrenadores (`trainer2`): el segundo rival está en el cliente 3 de la tabla de combate (`+0x54`), que el Lua ahora envía (también el compañero, cliente 2); salen como `enemy` 6-11. Validado (quemadura al Mudkip del segundo rival). |
 | 28-oct | **Randomizer (UPR ZX) validado:** datos idénticos al log del randomizer y pruebas en el juego (regalo, combates forzados, objeto en combate, huevo). `rom_compare.py` ahora mira las zonas cambiadas dentro de cada overlay (antes avisaba por cualquier cambio en el overlay 36). |
 
 ---
@@ -832,6 +839,9 @@ o si la memoria cambió entre la lectura y la escritura.
   así se vio que en combate 3 = granizo y 4 = arena (estaban al revés en `battle_set_weather`; corregido).
 - [x] `battle_set_weather` sol 3 turnos (contra una entrenadora): animación y mensaje al empezar el turno, y se acabó al tercero.
 - [x] Entrenador doble (21, Backers: dos Darumaka nivel 31): combate doble correcto.
+- [x] Dos entrenadores a la vez (`trainer` 162 + `trainer2` 163 del randomizer): combate doble contra Sewaddle y Mudkip;
+  `/state` muestra al segundo como `enemy` 6 y `battle_set_status` quemado en el slot 6 funcionó (ícono y daño).
+- [ ] Combate multi con compañero (cliente 2, `player` 6-11): sin probar; no hay orden para lanzarlo todavía.
 - [x] Perder un combate forzado: la primera versión **se colgó** ("An error has occurred"). En combates lanzados por guion el
   juego no hace la derrota solo (`EventBattleCall`, `unk14`): el guion debe preguntar si ganó y llamar a la derrota, como los
   del juego. Corregido (`0x8D`/`0x177` ¿ganó?, `0x19` comparar, `0x1F` saltar, `0x8C`/`0x176` derrota): al perder, fundido a

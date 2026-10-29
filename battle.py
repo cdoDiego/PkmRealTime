@@ -4,7 +4,9 @@ Fuente de los offsets: NDS Ironmon Tracker (BattleHandlerGen5.lua) + volcado en 
 Cada combatiente tiene DOS copias con el mismo formato:
   - copia visual  (tabla en puntero + 0x526A8, la que lee el tracker): la barra de vida se anima hacia ella
   - copia real    (tabla en puntero + 0x52790): con ella el juego calcula el daño y decide si se debilita
-Cada tabla: 6 punteros del jugador + contador, y desde +0x1C los del rival + contador.
+Cada tabla: 4 clientes de 0x1C bytes (6 punteros + contador): jugador, rival, compañero del jugador (combate multi) y
+segundo rival (combate contra dos entrenadores). El compañero y el segundo rival usan los índices 6-11 de su lado
+(6 = el que está en el campo), así los 0-5 siguen siendo los del jugador y del primer rival.
 Cada uno apunta a una estructura de combatiente, sin cifrar:
   +0x00 puntero al Pokémon (PK5 cifrado, 220 bytes)   +0x04 puntero de Ilusión
   +0x0C especie (u16)   +0x16 habilidad   +0x19 identificador en combate (pokeID)
@@ -64,6 +66,8 @@ def set_weather_command(weather: str, turns=None) -> str:
     return cmd + (f";J {show.hex()}" if show else "")
 
 
+SECOND_CLIENT = 6   # índice del primer Pokémon del compañero o del segundo rival
+
 # Bytes crudos del último POLL: {("player"|"enemy", índice, "real"|"visual"): (dirección, estructura)}
 RAW: dict = {}
 
@@ -87,7 +91,9 @@ def parse(field: str) -> dict:
             out["table"] = bits[1]
             continue
         side, idx, addr, raw, mon = bits[0][0], int(bits[0][1:]), int(bits[1], 16), bytes.fromhex(bits[2]), bits[3]
-        name = "player" if side in "pP" else "enemy"
+        name = "player" if side in "pPaA" else "enemy"
+        if side in "aAfF":                       # compañero / segundo rival
+            idx += SECOND_CLIENT
         copy = "real" if side.isupper() else "visual"
         RAW[(name, idx, copy)] = (addr, raw)
         if copy == "real":                       # se muestra la copia real; de la visual, solo su vida

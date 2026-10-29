@@ -80,6 +80,7 @@ class EventIn(BaseModel):
     commands: Optional[list] = None  # debug_inject: [["UPDATE_HP_GAUGE", 12], ["SET_GAUGE_STATUS", 12, 1]]
     show: bool = True                # battle_set_hp / battle_set_status: actualizar también la pantalla
     trainer: Optional[int] = None    # start_trainer_battle: nº de entrenador (de la ROM)
+    trainer2: Optional[int] = None   # start_trainer_battle: segundo entrenador (combate doble contra los dos)
     weather: Optional[str] = None    # set_weather: rain, snow, sandstorm... o número; battle_set_weather: none, sun, rain, sandstorm, hail
     destination: Optional[str] = None  # give_pokemon: "box1" (por defecto, todas las opciones) o "party" (orden del juego)
     form: Optional[int] = None       # give_pokemon al equipo / start_wild_battle: forma
@@ -154,7 +155,13 @@ def build_commands(ev: Event) -> str:
                                                         True if d["shiny"] else None, d["hidden_ability"], d["gender"],
                                                         d.get("no_flee"))
         if d["type"] == "start_trainer_battle":
-            return "SAVE;S " + field_script.trainer_battle(int(need(d, "trainer")))
+            t1, t2 = int(need(d, "trainer")), int(d.get("trainer2") or 0)
+            script = field_script.trainer_battle(t1, t2)
+            able = sum(1 for m in game["party"] if not m.get("egg") and m.get("hp", 0) > 0)
+            if able < field_script.party_needed(t1, t2):
+                raise ValueError(f"para este combate hacen falta {field_script.party_needed(t1, t2)} Pokémon que puedan "
+                                 f"luchar y tienes {able}")
+            return "SAVE;S " + script
         if d["type"] == "give_egg":
             if len(party_raw) >= 6:
                 raise ValueError("el equipo está lleno: el juego solo da huevos al equipo")

@@ -95,14 +95,32 @@ def wild_battle(species: int, level: int, form: int = 0, shiny=None, hidden_abil
             + _after_battle(CMD_WILD_IS_VICTORY, CMD_WILD_LOSE, CMD_WILD_BATTLE_END))
 
 
-def trainer_battle(trainer: int) -> str:
+STYLE_SINGLE, STYLE_DOUBLE = 0, 1   # estilo de combate del entrenador (TRAINER_PARAM_BATTLE_STYLE)
+
+
+def trainer_battle(trainer: int, trainer2: int = 0) -> str:
+    """El tipo de combate lo decide el juego por el estilo del primer entrenador (BtlSetup_SetTrainerLocal en
+    src/ov036/field_encount.c): uno doble (o triple, rotatorio) lucha así solo; con un segundo entrenador y el primero
+    individual es un combate doble contra los dos a la vez (BtlSetup_SetTrainer1v2), como cuando te ven dos juntos."""
     trainers = gamedata.DATA.get("trainers")
     if not trainers:
         raise ValueError("faltan los entrenadores en gen5_data.json: reinicia el puente con ROM_PATH configurado")
-    if not 1 <= trainer < len(trainers) or trainers[trainer][2] == 0:
-        raise ValueError(f"entrenador no válido: {trainer} (1-{len(trainers) - 1}, con Pokémon)")
-    return _words(CMD_TRAINER_BATTLE, trainer, 0, 0) + _after_battle(CMD_TRAINER_IS_VICTORY, CMD_TRAINER_LOSE,
-                                                                    CMD_TRAINER_BATTLE_END)
+    for t in (trainer, trainer2) if trainer2 else (trainer,):
+        if not 1 <= t < len(trainers) or trainers[t][2] == 0:
+            raise ValueError(f"entrenador no válido: {t} (1-{len(trainers) - 1}, con Pokémon)")
+    if trainer2 and trainers[trainer][1] != STYLE_SINGLE:
+        raise ValueError(f"el entrenador {trainer} ya es de combate {trainer_info(trainer)['battle_type']}: "
+                         "con un segundo entrenador, el primero debe ser individual")
+    return _words(CMD_TRAINER_BATTLE, trainer, trainer2, 0) + _after_battle(CMD_TRAINER_IS_VICTORY, CMD_TRAINER_LOSE,
+                                                                           CMD_TRAINER_BATTLE_END)
+
+
+def party_needed(trainer: int, trainer2: int = 0) -> int:
+    """Pokémon que hay que tener en condiciones de luchar: 2 en un combate doble, 3 en uno triple o rotatorio."""
+    style = gamedata.DATA["trainers"][trainer][1]
+    if trainer2 or style == STYLE_DOUBLE:
+        return 2
+    return 3 if style in (2, 3) else 1
 
 
 def field_weather(weather) -> str:

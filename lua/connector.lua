@@ -139,13 +139,16 @@ local function game_mode(game, party_addr)
 end
 
 -- En combate: cada combatiente en sus dos copias (estructura de batalla y su Pokémon cifrado).
--- Formato: "T:<tabla>,p0:<dir>:<estructura>:<pk5>,e0:...". p/e = copia visual; P/E = copia real.
+-- Formato: "T:<tabla>,p0:<dir>:<estructura>:<pk5>,e0:...". Minúscula = copia visual; mayúscula = copia real.
+-- La tabla tiene 4 clientes de 0x1C bytes (6 punteros + contador): p = jugador, e = rival, a = compañero del jugador
+-- (combate multi), f = segundo rival (combate contra dos entrenadores, visto el 28-oct).
 local function battle_hex(ptr_abs, game)
   local size = memory.getmemorydomainsize(DOMAIN)
   local tbl = ptr_abs + BATTLE_TABLE_PTR_OFF
   local srv = ptr_abs + BATTLE_SERVER_PTR_OFF
-  local parts = { "T:" .. read_hex(tbl, 0x38) }
-  for side, base in pairs({ p = tbl, e = tbl + 0x1C, P = srv, E = srv + 0x1C }) do
+  local parts = { "T:" .. read_hex(tbl, 0x70) }
+  for side, base in pairs({ p = tbl, e = tbl + 0x1C, a = tbl + 0x38, f = tbl + 0x54,
+                            P = srv, E = srv + 0x1C, A = srv + 0x38, F = srv + 0x54 }) do
     for i = 0, 5 do
       local a = memory.read_u32_le(off(base + 4 * i), DOMAIN) % 0x1000000
       if a ~= 0 and a + BATTLER_SIZE < size then

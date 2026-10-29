@@ -22,16 +22,24 @@ for bad in [lambda: field_script.wild_battle(0, 5), lambda: field_script.wild_ba
 
 # entrenadores: con datos sintéticos (clase, tipo de combate, nº de Pokémon)
 saved = gamedata.DATA.get("trainers"), gamedata.DATA.get("trainer_classes")
-gamedata.DATA["trainers"] = [[0, 0, 0], [1, 0, 2], [2, 1, 0]]
+gamedata.DATA["trainers"] = [[0, 0, 0], [1, 0, 2], [2, 1, 0], [2, 1, 2], [1, 0, 1]]
 gamedata.DATA["trainer_classes"] = ["?", "Lass", "Twins"]
 assert field_script.trainer_battle(1) == ("8500" "0100" "0000" "0000"
                                          "8d00" "0080" "1900" "0080" "0100" "1f00" "01" "02000000" "8c00" "8e00" "0200")
 assert field_script.trainer_info(1) == {"id": 1, "class": "Lass", "battle_type": "individual", "pokemon": 2}
-for bad in (0, 2, 3):        # 0 no existe, 2 no tiene Pokémon, 3 fuera de rango
+for bad in (0, 2, 5):        # 0 no existe, 2 no tiene Pokémon, 5 fuera de rango
     try:
         field_script.trainer_battle(bad); raise SystemExit("debía fallar")
     except ValueError:
         pass
+# dos entrenadores a la vez: el segundo va en el 2.º argumento de 0x0085
+assert field_script.trainer_battle(1, 4).startswith("8500" "0100" "0400" "0000")
+for bad in ((3, 1), (1, 2), (1, 9)):   # el primero ya es doble; el segundo sin Pokémon; fuera de rango
+    try:
+        field_script.trainer_battle(*bad); raise SystemExit(f"debía fallar: {bad}")
+    except ValueError:
+        pass
+assert [field_script.party_needed(*a) for a in ((1,), (3,), (1, 4))] == [1, 2, 2]
 gamedata.DATA["trainers"], gamedata.DATA["trainer_classes"] = saved
 # teletransporte: volar a la zona (0x028A zona dirección) o a una casilla (0x00C2 zona x z dirección)
 assert field_script.teleport("aspertia") == "8a02" "ab01" "0100" "0200"
