@@ -32,16 +32,20 @@ for _ in range(300):
     assert moves[0] and all(p[0x30 + i] == pk5.move_pp.max_pp(m) for i, m in enumerate(moves))
     assert struct.unpack_from("<I", p, 0x38)[0] >> 30 == 0           # ni huevo ni mote
 
-# casos concretos
+# casos concretos (movimientos y habilidad oculta: solo con datos de White 2 o Volt White 2, un randomizer los cambia)
+SAME_MOVES = gamedata.DATA.get("rom", {}).get("header_crc") in (0xD75C, 0x0A06)
 p = gift.create(501, 6, TRAINER, rng=rng)
-assert gift.summary(p)["moves"] == ["Tackle", "Tail Whip"]
+if SAME_MOVES:
+    assert gift.summary(p)["moves"] == ["Tackle", "Tail Whip"]
 assert p[0x48:0x5E].decode("utf-16-le").split("\uffff")[0] == "Oshawott"
 assert gift.create(29, 5, TRAINER, rng=rng)[0x48 + 14:0x48 + 16] == b"\x6e\x24"   # ♀ de Nidoran
 assert (gift.create(29, 5, TRAINER, rng=rng)[0x40] >> 1) & 3 == 1               # Nidoran♀ siempre hembra
 assert (gift.create(81, 5, TRAINER, rng=rng)[0x40] >> 1) & 3 == 2               # Magnemite sin género
 assert (gift.create(1, 5, TRAINER, gender="hembra", rng=rng)[0x40] >> 1) & 3 == 1
 p = gift.create(1, 5, TRAINER, hidden_ability=True, rng=rng)
-assert p[0x15] == 34 and p[0x42] & 1                                          # Clorofila
+assert p[0x15] == gift.species_info(1)["abilities"][2] and p[0x42] & 1        # oculta (Clorofila en el original)
+if SAME_MOVES:
+    assert p[0x15] == 34
 p = gift.create(1, 5, TRAINER, moves=[33, 76], item=234, nature=3, rng=rng)
 assert gift.summary(p)["moves"] == ["Tackle", gift.DATA["moves"][76]] and gift.summary(p)["item"] == "Leftovers" and p[0x41] == 3
 for bad in [dict(species=0), dict(species=650), dict(level=0), dict(level=101), dict(moves=[33, 33]),

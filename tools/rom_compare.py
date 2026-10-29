@@ -3,8 +3,8 @@
 Uso:  python tools/rom_compare.py <original.nds> <hack.nds>
 
 Muestra el código del cartucho y el CRC de la cabecera, qué overlays cambian, y las zonas del arm9 (descomprimido)
-que son distintas, avisando si alguna toca una dirección que usa connector.lua (tabla USED de abajo). Al final revisa en
-el hack las firmas de connector.lua (los bytes que el Lua comprueba antes de usar cada función).
+(y de los overlays, descomprimidos) que son distintas, avisando si alguna toca código que usa connector.lua. Al final revisa
+en el hack las firmas de connector.lua (los bytes que el Lua comprueba antes de usar cada función).
 El arm9 viene comprimido con BLZ (compresión hacia atrás); el final de la parte comprimida está en los parámetros
 del módulo (tras la marca 0xDEC00621 0x2106C0DE, campo compressed_static_end).
 """
@@ -13,15 +13,6 @@ import re
 import struct
 import sys
 
-# Direcciones que usa connector.lua en White 2 (IRDO). Las de datos dinámicos (montón) no salen de la ROM.
-USED = {
-    0x0201936C: "reserve_get (FieldStatus_GetReserveScript)",
-    0x02153DC8: "script_vm (FieldScript_AttachOpcodeGuard, overlay)",
-    0x021A8A64: "check_fainted (overlay 167)",
-    0x021B1A15: "client_proc (overlay 167)",
-    0x021D8F68: "item_table (overlay 167)",
-}
-OVERLAYS_USED = (12, 36, 167)
 SIG_OVERLAY = {"battle": 167, "map": 12}   # overlay cargado en cada modo de las firmas
 LUA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lua", "connector.lua")
 
@@ -135,24 +126,39 @@ def main() -> None:
     print(f"cartucho {ca} / {cb}   crc cabecera {ra:04x} / {rb:04x}")
     changed = [o for o in ov_a if ov_a[o][2] != ov_b.get(o, (0, 0, b""))[2]]
     print(f"overlays: {len(ov_a)} / {len(ov_b)}; distintos: {changed or 'ninguno'}")
-    for o in OVERLAYS_USED:
-        if o in changed:
-            print(f"  ATENCIÓN: el overlay {o} lo usa connector.lua y ha cambiado")
-        if o in ov_a and o in ov_b and ov_a[o][:2] != ov_b[o][:2]:
-            print(f"  ATENCIÓN: el overlay {o} se carga en otra dirección o con otro tamaño")
+    # código que usa connector.lua: las direcciones de sus firmas, en el arm9 o en el overlay de su modo
+    used = {}   # None (arm9) u overlay -> [(dirección, función)]
+    for name, (mode, pairs) in lua_sigs().items():
+        for addr, hexs in pairs:
+            where = None if a9r <= addr < a9r + len(arm_a) else SIG_OVERLAY[mode]
+            used.setdefault(where, []).append((addr, name))
+    hit = False
+
+    def show(regions, where):
+        nonlocal hit
+        for addr, n in regions:
+            hits = sorted({name for u, name in used.get(where, []) if addr - 16 <= u < addr + n + 16})
+            hit = hit or bool(hits)
+            print(f"  {addr:#010x} +{n}" + (f"   <-- toca {', '.join(hits)}" if hits else ""))
+
+    for o in changed:
+        ra, sa, da = ov_a[o]
+        rb, sb, db = ov_b.get(o, (0, 0, b""))
+        if (ra, sa) != (rb, sb):
+            print(f"  overlay {o}: se carga en otra dirección o con otro tamaño" + ("  <-- lo usa connector.lua" if o in used else ""))
+            hit = hit or o in used
+            continue
+        regions = diff_regions(da, db, ra)
+        print(f"  overlay {o}: {len(regions)} zonas distintas ({sum(n for _, n in regions)} bytes)")
+        show(regions, o)
     regions = diff_regions(arm_a, arm_b, a9r)
-    total = sum(n for _, n in regions)
-    print(f"arm9: {len(arm_a)} / {len(arm_b)} bytes; {len(regions)} zonas distintas ({total} bytes)")
-    for addr, n in regions:
-        hits = [name for u, name in USED.items() if addr - 16 <= u < addr + n + 16]
-        print(f"  {addr:#010x} +{n}" + (f"   <-- toca {', '.join(hits)}" if hits else ""))
-    bad = changed and any(o in changed for o in OVERLAYS_USED)
-    hit = any(addr - 16 <= u < addr + n + 16 for addr, n in regions for u in USED)
+    print(f"arm9: {len(arm_a)} / {len(arm_b)} bytes; {len(regions)} zonas distintas ({sum(n for _, n in regions)} bytes)")
+    show(regions, None)
     sigs = check_sigs(a9r, arm_b, ov_b)
     off = [n for n, ok in sigs.items() if not ok]
     print("firmas de connector.lua en el hack:", "todas coinciden" if not off else
           f"NO coinciden {', '.join(off)} (esas funciones se desactivarán)")
-    print("\nResultado:", "revisar: cambia código que usamos" if bad or hit or off else
+    print("\nResultado:", "revisar: cambia código que usamos" if hit or off else
           "el código que usa el puente es el mismo (los datos se leen de la ROM con rom.py)")
 
 

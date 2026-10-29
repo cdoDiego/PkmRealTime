@@ -511,7 +511,7 @@ habilidades, objetos, entrenadores) y se comprueba que sean de la ROM que se jue
 
 | Tipo de ROM | Previsión |
 | --- | --- |
-| Randomizer (Universal Pokemon Randomizer ZX) | Debería funcionar: cambia datos, no código. **Sin probar.** |
+| Randomizer (Universal Pokemon Randomizer ZX) | Funciona: cambia datos y algo de código que no usamos. **Validado el 28-oct** (UPR ZX 4.6.1), ver abajo. |
 | Romhack que solo cambia datos | Igual que el randomizer. **Volt White 2 (Drayano) validado el 28-oct**, ver abajo. |
 | Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse; además hay límites fijos (649 especies de reserva, 638 objetos en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, `field_script`, listas de `bag.py`). |
 
@@ -539,12 +539,21 @@ Plan:
   coinciden, también en la RAM del juego en el mapa).
 - [ ] **2. Buscar las direcciones si se movieron:** mismo método que `tools/symbol_offset.py` (buscar la firma en la RAM o en la
   ROM); también sirve para Black 2.
-- [ ] **3. Probar con un randomizer:** ROM de White 2 randomizada con UPR ZX; revisar `/state` (nombres, PP), regalos, combate
-  forzado salvaje y contra entrenador, `battle_set_item`, huevos.
+- [x] **3. Probar con un randomizer:** hecho el 28-oct (abajo).
 - [ ] **5. Redux** (Blaze Black 2 / Volt White 2 Redux): cambia mucho más; pasarle antes `tools/rom_compare.py` y hacer el paso 1.
 
 **Herramienta:** `python tools/rom_compare.py <original.nds> <hack.nds>` compara overlays y el arm9 descomprimidos (BLZ), avisa
 si alguna zona cambiada toca una dirección que usa `connector.lua` y revisa las firmas en el hack.
+
+**Randomizer (28-oct, UPR ZX 4.6.1, cartucho `IRDO`, CRC de cabecera `0b43`):**
+- Código: cambia 6 overlays (36, 162, 166, 284, 294, 316) y 8 zonas del arm9, ninguna en el código que usamos; las firmas
+  coinciden (en la ROM y en el juego).
+- Datos (`rom.py`) comparados con el log del randomizer: las 649 especies (estadísticas, habilidades, nombres), los 22 cambios
+  de PP y los movimientos por nivel de las 649 especies, sin diferencias.
+- Validado en el juego (partida nueva): `/state` (Mudkip con movimientos aleatorios), regalo al equipo (Pikachu con los
+  movimientos y la habilidad del log), combate salvaje forzado, combate contra el entrenador 161 (Bulbasaur con el equipo del
+  log), `battle_set_item` y `battle_set_hp` aplicados, huevo con eclosión rápida (eclosionó bien).
+- El número de entrenador del log (`#161`) es el mismo que usa `start_trainer_battle`.
 
 **Volt White 2 (28-oct, ROM "Complete", cartucho `IRDO`, CRC de cabecera `0a06`):**
 - Código: las 344 overlays idénticas (combate 167, mapa 12 y 36 incluidos); en el arm9, 7 zonas pequeñas (277 bytes), ninguna en
@@ -719,6 +728,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | **Volt White 2 validado:** mismo código que White 2 (`tools/rom_compare.py`), datos leídos con `rom.py`. Guiones en cola en el Lua; huevo rápido por especie; texto PK/MN. |
 | 28-oct | Estación (`set_season`) validada: escribir solo el byte no basta (al cambiar de mapa vuelve la del reloj); con la sincronización forzada encendida se vio nieve en octubre. |
 | 28-oct | Firmas de código: el Lua comprueba los bytes de cada función antes de usarla y desactiva solo la que no coincida (`compat` en `/state`); `rom_compare.py` descomprime los overlays y revisa las firmas en el hack. |
+| 28-oct | **Randomizer (UPR ZX) validado:** datos idénticos al log del randomizer y pruebas en el juego (regalo, combates forzados, objeto en combate, huevo). `rom_compare.py` ahora mira las zonas cambiadas dentro de cada overlay (antes avisaba por cualquier cambio en el overlay 36). |
 
 ---
 
