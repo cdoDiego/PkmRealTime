@@ -1,5 +1,7 @@
 """Cajas del PC (bloques 0-24 del save): el bloque 0 tiene los nombres, la caja abierta y cuántas hay; cada caja son 30
 Pokémon de 136 bytes. El Lua manda en cada lectura el bloque 0, la caja abierta y otra caja por turnos."""
+import functools
+
 import gift
 import pk5
 
@@ -47,16 +49,23 @@ def count(main: bytes) -> int:
     return n if 1 <= n <= MAX_BOXES else MAX_BOXES
 
 
+@functools.lru_cache(maxsize=2048)
+def _slot_info(chunk: bytes):
+    """Resumen de un Pokémon de caja (None = hueco vacío). Con memoria: solo se recalcula si cambian sus bytes."""
+    if gift.is_empty_slot(chunk):
+        return None
+    try:
+        info = gift.summary(pk5.decrypt_ro(chunk))
+        return {k: info[k] for k in ("species", "name", "level", "valid")}
+    except (ValueError, IndexError, KeyError, StopIteration):   # datos raros: se marcan, no se tumba el puente
+        return {"valid": False}
+
+
 def summary(raw: bytes) -> list:
     """Los Pokémon de una caja: [{"slot", "species", "name", "level", "valid"}] (huecos vacíos fuera)."""
     out = []
     for i in range(SLOTS):
-        chunk = raw[i * SLOT_SIZE:(i + 1) * SLOT_SIZE]
-        if gift.is_empty_slot(chunk):
-            continue
-        try:
-            info = gift.summary(pk5.decrypt(chunk))
-            out.append({"slot": i, **{k: info[k] for k in ("species", "name", "level", "valid")}})
-        except (ValueError, IndexError, KeyError, StopIteration):   # datos raros: se marcan, no se tumba el puente
-            out.append({"slot": i, "valid": False})
+        info = _slot_info(bytes(raw[i * SLOT_SIZE:(i + 1) * SLOT_SIZE]))
+        if info is not None:
+            out.append({"slot": i, **info})
     return out

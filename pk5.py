@@ -3,6 +3,7 @@
 Caja: 136 bytes. Equipo: 220 bytes (136 + 84 de stats de combate).
 Fuente del formato: projectpokemon.org (Pokemon NDS Structure / BW save structure).
 """
+import functools
 import struct
 
 import move_pp
@@ -78,6 +79,13 @@ def _shuffle(data: bytearray, order: str, inverse: bool) -> None:
         else:
             out[dst] = blocks[src]
     data[0x08:0x88] = b"".join(out)
+
+
+@functools.lru_cache(maxsize=2048)
+def decrypt_ro(raw: bytes) -> bytes:
+    """decrypt() con memoria, para leer sin modificar: los mismos bytes cifrados no se vuelven a descifrar (las cajas casi
+    nunca cambian y se leen en cada consulta). Devuelve bytes (inmutables) para que nadie cambie la copia guardada."""
+    return bytes(decrypt(raw))
 
 
 def decrypt(raw: bytes) -> bytearray:

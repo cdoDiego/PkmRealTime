@@ -174,7 +174,7 @@ def summary(plain: bytes) -> dict:
 
 def is_empty_slot(raw: bytes) -> bool:
     """Un hueco vacío de la caja es un Pokémon cifrado con PID 0 y especie 0."""
-    plain = pk5.decrypt(raw)
+    plain = pk5.decrypt_ro(bytes(raw))
     return struct.unpack_from("<I", plain, 0)[0] == 0 and struct.unpack_from("<H", plain, 0x08)[0] == 0
 
 

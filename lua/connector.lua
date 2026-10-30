@@ -69,10 +69,18 @@ local SAFETY_SLOT = 9          -- ranura de savestate de seguridad
 
 local function off(addr) return addr - BASE end
 
+-- Tablas para pasar bytes a hex sin string.format por byte (se hace ~13.000 veces por consulta)
+local HEX, HEX_OF_CHAR = {}, {}
+for i = 0, 255 do
+  HEX[i] = string.format("%02x", i)
+  HEX_OF_CHAR[string.char(i)] = HEX[i]
+end
+
 local function to_hex(bytes)
-  local t = {}
+  local t, n = {}, 0
   for i = 0, #bytes do
-    if bytes[i] ~= nil then t[#t + 1] = string.format("%02x", bytes[i]) end
+    local b = bytes[i]
+    if b ~= nil then n = n + 1; t[n] = HEX[b] end
   end
   return table.concat(t)
 end
@@ -83,9 +91,32 @@ local function from_hex(hex)
   return t
 end
 
-local function read_hex(addr, len)
+local function read_hex_array(addr, len)
   return to_hex(memory.read_bytes_as_array(off(addr), len, DOMAIN))
 end
+
+-- Más rápido: un solo string con los bytes y gsub con tabla (en C). Solo se usa si da exactamente lo mismo que el
+-- método por tabla (se comprueba al arrancar; si BizHawk convirtiera los bytes altos a UTF-8, no coincidiría).
+local function read_hex_string(addr, len)
+  return (memory.read_bytes_as_binary_string(off(addr), len, DOMAIN):gsub(".", HEX_OF_CHAR))
+end
+
+local read_hex = read_hex_array
+if memory.read_bytes_as_binary_string ~= nil then
+  local ok, same = pcall(function()
+    local high = false   -- con la RAM en ceros (juego sin cargar) la prueba no vale: hacen falta bytes >= 0x80
+    for _, a in ipairs({ BASE + 0x4000, BASE + 0x100000, BASE + 0x200000 }) do
+      local h = read_hex_array(a, 0x400)
+      if read_hex_string(a, 0x400) ~= h then return false end
+      for hi in h:gmatch("(%x)%x") do   -- primera cifra de cada byte
+        if hi:find("[89a-f]") then high = true; break end
+      end
+    end
+    return high
+  end)
+  if ok and same then read_hex = read_hex_string end
+end
+console.log("lectura de memoria: " .. (read_hex == read_hex_string and "rápida (binary_string)" or "por tabla"))
 
 -- Devuelve la dirección absoluta del equipo y cuántos hay, o nil si no es válida
 local function party_location()

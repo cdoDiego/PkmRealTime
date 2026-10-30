@@ -473,6 +473,20 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | | `SAVE` / `LOAD` savestate de seguridad (ranura 9) |
 | Lua → Python | `RES <ok\|fail> <detalle>` tras cada lote |
 
+**Rendimiento (29-oct).** En cada consulta (cada 10 frames) el juego se detiene hasta que el Lua lee la memoria y el
+puente responde; si eso pasa de un frame (16 ms a 100 %, 8 ms a 200 %) se oyen cortes en la música y no se nota la
+velocidad 200 %. Medido con una consulta real (~25 KB):
+- Puente: 11 ms → 0,4 ms. Casi todo era descifrar los 60 Pokémon de las dos cajas en cada consulta (dos veces: `/state`
+  y avisos). Ahora `pk5.decrypt_ro`, `boxes._slot_info` y `happenings._box_mon` guardan el resultado por bytes cifrados
+  (`lru_cache`): solo se recalcula lo que cambió. `decrypt_ro` devuelve `bytes` (inmutable) para que nadie modifique la
+  copia guardada; para editar se sigue usando `decrypt`.
+- Lua: hex con tabla precalculada (sin `string.format` por byte) y, si existe, `memory.read_bytes_as_binary_string` +
+  `gsub` con tabla. Al arrancar compara los dos métodos en tres zonas de la RAM (exige bytes ≥ 0x80, por si el juego no
+  está cargado) y usa el rápido solo si coinciden; la consola dice cuál usa ("lectura de memoria: ..."). En BizHawk 2.11.1 sale "rápida (binary_string)": los bytes
+  altos llegan bien.
+- Resultado en el juego: la música suena bien y se nota la velocidad 200 %.
+- Si hiciera falta más: mandar mochila y cajas con menos frecuencia (cambian poco); cambia el protocolo.
+
 ---
 
 ## 5. Scripts
@@ -892,6 +906,7 @@ Notas:
 | 29-oct | Cajas 2-24 (`boxes.py`: bloque 0 con nombres, caja abierta y nº de cajas; el Lua manda la abierta y otra por turnos) y `move_pokemon` / `remove_pokemon` (`pc.py`). Validado: equipo → caja 2 (Patrat; el equipo se ve bien con 5), caja 1 → equipo (Eevee nivel 20, 53/53 PS, ficha correcta), liberar de la caja 2; avisos `moved` y `left`. Guardar en el juego y reiniciar: carga sin error, Eevee sigue en el equipo y las cajas vacías. |
 | 29-oct | Overlay de OBS (`overlay/`, servido por el puente en `/overlay/`): página de configuración con atajos y vista previa, vista con lugar, medallas, equipo (sprites, PS, estado) y avisos animados. El token se rellena solo desde esta computadora (`/overlay-token`). Arreglos: faltaba `websockets` (WebSocket rechazado), Ctrl+C no cerraba el puente con el overlay abierto, un overlay que dejaba de leer trababa BizHawk (ahora cada cliente tiene su cola) y el aviso de conexión no se ocultaba. Validado con el juego: cambios de ruta, ciudad y equipo en vivo, sin trabas. |
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
+| 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 
 ---
 

@@ -432,7 +432,7 @@ def update_party(hexdata: str) -> None:
     party_raw[:] = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
     species = gamedata.DATA.get("species", {})
     game["party"] = [{**s, "name": species.get(str(s["species"]), {}).get("name", "")}
-                     for s in (pk5.summary(pk5.decrypt(r)) for r in party_raw)]
+                     for s in (pk5.summary(pk5.decrypt_ro(bytes(r))) for r in party_raw)]
     for p in list(pending_eggs):
         new = [i for i, m in enumerate(game["party"])
                if m["valid"] and m.get("egg") and m["species"] == p["species"] and i not in p["known"]]

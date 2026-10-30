@@ -3,6 +3,7 @@ la anterior. Los Pokémon se siguen por su PID, así se reconocen aunque cambien
 
 Se ven el equipo y todas las cajas (las que el puente ya ha leído).
 """
+import functools
 import struct
 
 import gamedata
@@ -26,6 +27,17 @@ def _mon(plain: bytes, where: str, slot: int, party: bool) -> dict:
     return m
 
 
+@functools.lru_cache(maxsize=2048)
+def _box_mon(chunk: bytes):
+    """(PID, datos) de un Pokémon de caja; None = hueco vacío; False = no válido. Con memoria (las cajas casi no cambian)."""
+    if gift.is_empty_slot(chunk):
+        return None
+    plain = pk5.decrypt_ro(chunk)
+    if not pk5.is_valid(plain):
+        return False
+    return struct.unpack_from("<I", plain, 0)[0], _mon(plain, "", 0, False)
+
+
 def snapshot(mode: str, location, badges_byte, party_raw: list, box_data: dict) -> dict:
     """Lo que se compara entre lecturas. mons = None si algún Pokémon no se pudo leer (a medio escribir)."""
     snap = {"mode": mode, "zone": location["zone"] if location else None, "badges": badges_byte, "mons": None}
@@ -34,20 +46,21 @@ def snapshot(mode: str, location, badges_byte, party_raw: list, box_data: dict) 
     mons = {}
     try:
         for i, raw in enumerate(party_raw):
-            plain = pk5.decrypt(raw)
+            plain = pk5.decrypt_ro(bytes(raw))
             if not pk5.is_valid(plain):
                 return snap
             mons[struct.unpack_from("<I", plain, 0)[0]] = _mon(plain, "party", i, True)
         for n in sorted(box_data):          # {nº de caja desde 0: 30 Pokémon de 136 bytes}
             raw = box_data[n]
             for i in range(len(raw) // BOX_SLOT):
-                chunk = raw[i * BOX_SLOT:(i + 1) * BOX_SLOT]
-                if gift.is_empty_slot(chunk):
+                got = _box_mon(bytes(raw[i * BOX_SLOT:(i + 1) * BOX_SLOT]))
+                if got is None:
                     continue
-                plain = pk5.decrypt(chunk)
-                if not pk5.is_valid(plain):
+                if got is False:
                     return snap
-                mons.setdefault(struct.unpack_from("<I", plain, 0)[0], _mon(plain, f"box{n + 1}", i, False))
+                pid, base = got
+                if pid not in mons:
+                    mons[pid] = {**base, "where": f"box{n + 1}", "slot": i}
     except (ValueError, IndexError, KeyError, struct.error):
         return snap
     snap["mons"] = mons
