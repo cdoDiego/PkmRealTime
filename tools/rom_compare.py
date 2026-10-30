@@ -97,10 +97,18 @@ def check_sigs(arm9_ram: int, arm9: bytes, overlays: dict, game_code: str = "IRD
             n = len(hexs) // 2
             if arm9_ram <= addr < arm9_ram + len(arm9):
                 got = arm9[addr - arm9_ram:addr - arm9_ram + n]
+                ok = ok and got.hex() == hexs
             else:
-                ram, _, data = overlays.get(SIG_OVERLAY[mode], (0, 0, b""))
-                got = data[addr - ram:addr - ram + n] if ram <= addr else b""
-            ok = ok and got.hex() == hexs
+                # el overlay de su modo; si no está ahí, cualquier overlay que cubra esa dirección (en el mapa se
+                # cargan varios: p. ej. los encuentros salvajes están en el 36)
+                order = [SIG_OVERLAY[mode]] + [o for o in overlays if o != SIG_OVERLAY[mode]]
+                found = False
+                for oid in order:
+                    ram, _, data = overlays.get(oid, (0, 0, b""))
+                    if ram <= addr and addr + n <= ram + len(data) and data[addr - ram:addr - ram + n].hex() == hexs:
+                        found = True
+                        break
+                ok = ok and found
         out[name] = ok
     return out
 

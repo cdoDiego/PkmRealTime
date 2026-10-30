@@ -92,6 +92,7 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Dinero y medallas (bloque Misc) | puntero + `0x21A20` | u32 + u8 | Dinero (tope 9.999.999) y medallas (un bit cada una, en `+4`). Bloque Misc del save (`0x21100`) | PKHeX (`Misc5`) + tracker (`badges` = `0x21A24`) | ✅ leído y escrito 27-oct (₽7188 → ₽8188, se conserva al guardar) |
 | Variable del buzón | — | — | Idea inicial para pasar mensajes al juego | — | ➖ ya no hace falta: los guiones propios (`S`) cubren ese uso |
 | `FieldStatus_GetReserveScript` | `0x0201936C` | código | Lee el guion reservado (`FieldStatus` + `0x12`, u16) | pokebw2 (B2 `0x02019340` + `0x2C`) | ✅ usado 27-oct (combates forzados) |
+| `FieldEncount_CreateWildPkm` | `0x021A0E00` (overlay 36) | código | Crea el Pokémon salvaje; nº de tiradas de PID en `movs r6,#1` (`+0x18`) | pokebw2 `src/ov036/enc_pokeset.c` + símbolos `w2_us` + ROM | ✅ parcheado 30-oct (variocolor) |
 | `FieldScript_AttachOpcodeGuard` | `0x02153DC8` | código | Se llama al crear la máquina de un guion (`r0` = VM, `pc` en `+0x20`) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
 | Clima del combate (`sField`) | `0x021DD928` | 2 × u32 | Clima (0 nada, 1 sol, 2 lluvia, 3 granizo, 4 arena) y turnos (`0xFF` = sin fin) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 27-oct |
 | `ServerControl_CheckFainted` | `0x021A8A64` | código | Decide si un combatiente se debilita (`r1` = copia real) | pokebw2 (B2 + `0x40`) | ✅ usado 27-oct |
@@ -383,6 +384,24 @@ Qué implica:
 - Falta: (1) ~~zona del jugador~~ hecho (abajo); (2) ~~recarga al cambiar de zona~~ confirmado; (3) ~~firmas~~ hecho (`encounters`); (4) ~~tablas de la ROM en `rom.py`~~ hecho; (5) el evento que
   escribe la tabla con zona y ventana de fecha/hora, y la repone al acabar.
 
+### Probabilidad de variocolor (investigación, 30-oct)
+
+- En Gen 5 ser variocolor no se guarda: se calcula con el PID y el ID/ID secreto del entrenador
+  (`PML_UtilPIDIsRare`: `(id alto ^ id bajo ^ PID alto ^ PID bajo) < 8`, 1 de cada 8192).
+- `FieldEncount_CreateWildPkm` (pokebw2 `src/ov036/enc_pokeset.c`; W2 `0x021A0E00` en el overlay 36, mismo en Volt White
+  2) tira el PID `rolls` veces y se queda con el primero variocolor: `rolls = 1`, `+2` con el Amuleto Iris (objeto 632),
+  y luego `PassPower_ApplyLuckyShiny`. Solo la usan los encuentros salvajes (también los combates salvajes forzados);
+  regalos, huevos (Guardería, con su propia lógica) y entrenadores no pasan por ahí.
+- Código (desde `+0x18`): `movs r6,#1` · `bl GameData_GetBag` · `movs r1,#0x9e; lsls r1,#2` (632) · ... ·
+  `adds r6,#2` · `mov r0,r6` · `bl PassPower_ApplyLuckyShiny` · `movs r6,#0` (`+0x36`, contador del bucle).
+- Parche (`set_shiny_odds`): el byte de `movs r6,#N` = tiradas (hasta 255 ≈ 1/32). Para más, `movs r6,#0` pasa a
+  `lsls r0,r0,#s` (tiradas × 2^s); el contador empieza entonces en N en vez de 0, así que hace N·(2^s − 1) tiradas.
+  Tiradas para "1 de cada X": `ln(1 − 1/X) / ln(1 − 1/8192)` (1/100 → 82; 1/2 → ~5700; máximo 40.000 ≈ 99 %).
+- El overlay del mapa se recarga desde la ROM al salir de cada combate, y en combate esa memoria la ocupa el overlay
+  del combate: el Lua mantiene el parche (`P`) y solo escribe si los 32 bytes son exactamente el original o el parche.
+- Validado: con 1/2, variocolor al 4.º encuentro; el parche vuelve solo al salir del combate; al quitarlo la memoria
+  queda igual que la ROM. Sin pausas al empezar los combates con ~5700 tiradas.
+
 ### Direcciones del tracker que aún no usamos (para la fase 5, combate)
 
 Son de `MemoryAddresses.lua` del NDS Ironmon Tracker (W2). Todas son puntero + offset, salvo que se diga otra cosa. **Ninguna está probada por nosotros.**
@@ -470,6 +489,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 | | `I <dir> <objeto>` objeto de un combatiente (copia real), con sus efectos registrados en el juego |
 | | `R <dir> <n>` lee bytes (herramienta de investigación) |
 | | `S <hex>` ejecuta un guion propio en cuanto el personaje quede libre (combates forzados, clima del mapa) |
+| | `P <dir> <hex original> <hex nuevo>` parche de código que se mantiene: se reaplica en cada consulta si la memoria vuelve al original (overlay recargado); solo escribe si coincide exactamente con el original o el parche; con nuevo = original se quita. Al cerrar el Lua se restauran todos |
 | | `SAVE` / `LOAD` savestate de seguridad (ranura 9) |
 | Lua → Python | `RES <ok\|fail> <detalle>` tras cada lote |
 
@@ -606,6 +626,7 @@ ciegas (cuelgue o partida corrupta): solo se desactiva esa función.
 | `weather` | puntero a `sField` | en combate | `battle_set_weather` falla |
 | `script` | `FieldStatus_GetReserveScript` (arm9) + `FieldScript_AttachOpcodeGuard` (overlay 12) | en el mapa; y otra vez justo al ejecutarse | combates forzados, clima del mapa, teletransporte, regalo al equipo y huevos fallan |
 | `encounters` | `GameData_GetEventData` (arm9) + `GetEncountData` (overlay 12) | en el mapa | no se lee (ni se escribirá) la tabla de encuentros |
+| `shiny` | inicio de `FieldEncount_CreateWildPkm` (overlay 36; `rom_compare` busca la firma en cualquier overlay que cubra la dirección) | en el mapa | `set_shiny_odds` falla |
 
 - Cada función queda `true` (código esperado), `false` (distinto) o `null` (aún no comprobada: su overlay no ha estado en
   memoria, p. ej. las de combate hasta el primer combate). Un acierto se queda para toda la sesión.
@@ -758,6 +779,9 @@ Eventos disponibles:
 - `/state`: cada Pokémon (equipo y combate) muestra también `shiny`, `gender`, `form`, `ability` y `hidden_ability`.
 - `give_money` / `take_money` / `set_money`: dinero (`qty`). No baja de 0 ni pasa de 9.999.999. Con el personaje libre.
   `/state` muestra `money` y `badges` (número de medallas).
+- `set_shiny_odds`: probabilidad de variocolor en los encuentros salvajes (`odds`: 1 de cada N, de 2 a 8192; sin `odds`
+  = normal). Sale del todo con 1/8192 de serie; queda puesto hasta quitarlo (o cerrar el Lua). Si el Lua se reconecta,
+  el puente lo vuelve a mandar. Solo White 2 (`IRDO`) por ahora.
 - `set_season`: estación del mapa (`season`: `spring`/`summer`/`autumn`/`winter`, en español, o 0-3; `real` vuelve a la
   del reloj). Se ve al cambiar de mapa (salir de un edificio). Al cambiar de mapa el juego pone la estación del mes
   (`GameData_GetSeasons`) salvo con la sincronización forzada activa (la de jugar conectado), que el evento enciende.
@@ -844,7 +868,9 @@ Notas:
   (objetivos al azar: nunca huevos ni debilitados; "Debilitar a uno" nunca deja el equipo sin nadie en pie). De fábrica:
   nada, curar, Poké/Ultra/Master Ball, caramelo raro, revivir, ±dinero, Pokémon al azar (o variocolor) a la caja 1 del
   nivel medio, parálisis/sueño a uno, veneno a todos, debilitar a uno, combate salvaje (+2 niveles), lluvia, nieve y
-  viaje a una ciudad. Desactivados de fábrica: Master Ball, variocolor, debilitar y viaje.
+  viaje a una ciudad y "Hora variocolor" (1/50 durante 10 min). Desactivados de fábrica: Master Ball, variocolor,
+  debilitar y viaje. Un efecto puede devolver eventos con `after` (segundos): se aplican después y otro del mismo tipo
+  reinicia la espera (`schedule_event`), así dos horas variocolor seguidas no se cortan antes.
 - Pendiente: acomodar opciones y diseño (MVP validado).
 - La carpeta no depende de Python: se puede mover a otro proyecto cambiando solo de dónde se sirve.
 
@@ -907,6 +933,7 @@ Notas:
 | 29-oct | Overlay de OBS (`overlay/`, servido por el puente en `/overlay/`): página de configuración con atajos y vista previa, vista con lugar, medallas, equipo (sprites, PS, estado) y avisos animados. El token se rellena solo desde esta computadora (`/overlay-token`). Arreglos: faltaba `websockets` (WebSocket rechazado), Ctrl+C no cerraba el puente con el overlay abierto, un overlay que dejaba de leer trababa BizHawk (ahora cada cliente tiene su cola) y el aviso de conexión no se ocultaba. Validado con el juego: cambios de ruta, ciudad y equipo en vivo, sin trabas. |
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
+| 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
 
 ---
 
@@ -999,6 +1026,12 @@ Notas:
 - [x] En el mapa: bytes de `reserve_get` y `script_vm` iguales en la RAM.
 - [x] Con el Lua recargado, en un combate salvaje: `compat` con las cinco funciones en `true`; quemadura al rival (con ícono)
   y lluvia siguen funcionando.
+
+### Variocolor (en el juego)
+- [x] `set_shiny_odds` 1/2 en la Ruta 20: variocolor al 4.º encuentro, sin pausas al empezar el combate.
+- [x] El parche vuelve solo tras cada combate (memoria leída en el mapa) y no se toca en combate.
+- [x] Quitarlo (sin `odds`): la memoria vuelve a ser la de la ROM.
+- [ ] "Hora variocolor" de la ruleta: vuelve a lo normal a los 10 minutos.
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.

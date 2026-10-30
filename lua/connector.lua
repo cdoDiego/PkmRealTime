@@ -58,6 +58,7 @@ local GAMES = {
              weather = { mode = "battle", { 0x021D59E8, "28d91d02" } },                             -- -> battle_field
              script  = { mode = "map",    { 0x0201936C, "408a7047" },                               -- reserve_get
                                           { 0x02153DC8, "10b5041cc1f606fe01f0ecf9" } },             -- script_vm
+             shiny = { mode = "map", { 0x021A0E00, "f0b587b0141c04900d1c2088617904227ff646fa" } },     -- FieldEncount_CreateWildPkm (ov036)
              encounters = { mode = "map", { 0x02017240, "5621890040587047" },                       -- GameData_GetEventData
                                           { 0x0215CF70, "38307047" } },                             -- GetEncountData
            } },
@@ -155,7 +156,7 @@ end
 local function compat_field(game)
   if game == nil or game.sigs == nil then return "-" end
   local t = {}
-  for _, f in ipairs({ "faint", "inject", "item", "weather", "script", "encounters" }) do
+  for _, f in ipairs({ "faint", "inject", "item", "weather", "script", "encounters", "shiny" }) do
     local v = check_sig(game, f)
     t[#t + 1] = f .. "=" .. (v == nil and "?" or (v and "1" or "0"))
   end
@@ -444,6 +445,31 @@ local function set_battle_item(game, mon, item)
   return true, string.format("I objeto %d (%d efectos)", item, num)
 end
 
+-- Parches de código que se mantienen: el código de un overlay vuelve al original cada vez que el juego lo recarga
+-- (p. ej. el del mapa al salir de un combate), así que se revisan en cada consulta. Solo se escribe si la memoria es
+-- exactamente el código original (o el parche): si en esa dirección hay otro overlay cargado, no se toca nada.
+local code_patches = {}   -- dirección -> { orig = hex, new = hex }
+
+local function maintain_patches()
+  for a, p in pairs(code_patches) do
+    local cur = read_hex(a, #p.orig / 2)
+    if p.new == p.orig then                                  -- quitar: se restaura y se olvida
+      if cur == p.old then memory.write_bytes_as_array(off(a), from_hex(p.orig), DOMAIN) end
+      if cur == p.orig or cur ~= p.old then code_patches[a] = nil end
+    elseif cur == p.orig or (p.old ~= nil and cur == p.old) then
+      memory.write_bytes_as_array(off(a), from_hex(p.new), DOMAIN)
+      p.old = nil
+    end
+  end
+end
+
+local function restore_patches()
+  for a, p in pairs(code_patches) do
+    if read_hex(a, #p.orig / 2) == p.new then memory.write_bytes_as_array(off(a), from_hex(p.orig), DOMAIN) end
+  end
+  code_patches = {}
+end
+
 local function run(cmd)
   local op, a, b, c = cmd:match("^(%S+)%s*(%S*)%s*(%S*)%s*(%S*)")
   if op == "W" then
@@ -508,6 +534,17 @@ local function run(cmd)
     local okc, errc = require_sig(game, "item", "I")
     if not okc then return false, errc end
     return set_battle_item(game, tonumber(a), tonumber(b))
+  elseif op == "P" then                         -- parche de código que se mantiene: P <dir> <hex original> <hex nuevo>
+    local addr = tonumber(a)
+    if addr == nil or #b ~= #c or #b == 0 or #b > 0x100 then return false, "P: datos inválidos" end
+    local prev = code_patches[addr]
+    if prev ~= nil and prev.orig ~= b then return false, "P: ya hay otro parche en " .. a end
+    -- "old" = lo que pudo quedar escrito del parche anterior, para cambiarlo o quitarlo
+    code_patches[addr] = { orig = b, new = c, old = prev and prev.new or nil }
+    maintain_patches()
+    local cur = read_hex(addr, #b / 2)
+    local state = cur == c and "aplicado" or "pendiente (se aplica al volver al mapa)"
+    return true, "P " .. a .. " " .. (b == c and "quitado" or state)
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
     if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end
@@ -545,7 +582,7 @@ local function handle(reply)
   comm.socketServerSend("RES " .. (ok_all and "ok" or "fail") .. " " .. table.concat(details, ","))
 end
 
-event.onexit(function() faint_unhook(); script_unhook() end)
+event.onexit(function() faint_unhook(); script_unhook(); restore_patches() end)
 comm.socketServerSetTimeout(50)
 console.log("connector.lua listo; conectado: " .. tostring(comm.socketServerIsConnected()))
 
@@ -585,6 +622,7 @@ while true do
       script_status = string.format("esperando (%d bytes, %d más en cola)", #pending_script, #script_queue)
     end
     if script_hooks and pending_script == nil then script_unhook() end
+    maintain_patches()
     local cf = compat_field(game)
     comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s %s", mode, addr or 0, party, bag, box, trainer,
                                         code:gsub("[^%w]", "_"), crc, battle, misc, cf, loc))

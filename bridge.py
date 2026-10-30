@@ -59,7 +59,7 @@ class EventIn(BaseModel):
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
                   "give_pokemon", "give_egg", "move_pokemon", "remove_pokemon", "battle_set_hp", "battle_set_status",
-                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season",
+                  "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season", "set_shiny_odds",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
@@ -101,6 +101,7 @@ class EventIn(BaseModel):
     z: Optional[int] = None
     season: Optional[str] = None     # set_season: spring/summer/autumn/winter (primavera/verano/otoño/invierno) o 0-3
     hatch_cycles: Optional[int] = None   # give_egg / set_egg_cycles: ciclos para eclosionar (0-255; 0 = casi ya)
+    odds: Optional[int] = None       # set_shiny_odds: variocolor 1 de cada N encuentros salvajes (2-8192; sin odds = normal)
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
 
 
@@ -288,6 +289,8 @@ def build_commands(ev: Event) -> str:
         raise ValueError("en combate se escribe en la estructura de batalla (fase 5)")
     if d["type"] in ("give_money", "take_money", "set_money"):
         return money_commands(d)
+    if d["type"] == "set_shiny_odds":
+        return shiny_command(d["odds"])
     if d["type"] == "set_season":
         return season_command(str(need(d, "season")))
     if d["type"] == "give_pokemon" and d.get("destination") == "party":   # con la orden del juego (guion propio)
@@ -371,7 +374,8 @@ def apply_change(d: dict, old: bytes) -> bytearray:
 COMPAT_NAMES = {"faint": "debilitar (vida 0 en combate)", "inject": "actualizar la pantalla del combate",
                 "item": "objeto en combate", "weather": "clima del combate", "script": "guiones propios (combates forzados, "
                 "clima del mapa, teletransporte, regalos al equipo, huevos)",
-                "encounters": "encuentros salvajes de la zona"}
+                "encounters": "encuentros salvajes de la zona",
+                "shiny": "probabilidad de variocolor"}
 
 
 def parse_compat(field: str) -> dict:
@@ -381,6 +385,49 @@ def parse_compat(field: str) -> dict:
         name, _, v = part.partition("=")
         out[name] = {"1": True, "0": False}.get(v)
     return out
+
+
+# Variocolor salvaje: FieldEncount_CreateWildPkm (ov036) tira el PID "rolls" veces y se queda con el primero variocolor
+# (rolls = 1, +2 con el Amuleto Iris). Se parchea "movs r6,#1" (nº de tiradas) y, para más de 255, "movs r6,#0" (inicio
+# del contador) por "lsls r0,r0,#s" (tiradas × 2^s; el contador empieza en N, da igual). Ver DOCUMENTACION.md.
+SHINY_PATCH = {"IRDO": (0x021A0E18, "012676f69bfa9e2189000122042367f625fb002800d0b61c301c72f661fd0026")}
+SHINY_BASE = 8192          # 1 de cada 8192 sin parche
+SHINY_MAX_ROLLS = 40000    # ~99 %; cada tirada cuesta poco, pero 40.000 ya se notan al empezar el combate
+shiny_odds: Optional[int] = None
+
+
+def shiny_rolls(odds: int) -> int:
+    """Tiradas para que salga variocolor ~1 de cada "odds" encuentros: 1 - (1 - 1/8192)^tiradas = 1/odds."""
+    import math
+    return max(1, min(SHINY_MAX_ROLLS, round(math.log(1 - 1 / odds) / math.log(1 - 1 / SHINY_BASE))))
+
+
+def shiny_patch_bytes(orig: str, rolls: int) -> str:
+    code = bytearray.fromhex(orig)
+    if rolls <= 255:
+        code[0] = rolls
+        return code.hex()
+    shift = next(s for s in range(1, 16) if -(-rolls // ((1 << s) - 1)) <= 255)
+    code[0] = -(-rolls // ((1 << shift) - 1))          # el bucle va de N a N·2^s: N·(2^s - 1) tiradas
+    code[-2:] = (shift << 6).to_bytes(2, "little")     # lsls r0, r0, #shift
+    return code.hex()
+
+
+def shiny_command(odds) -> str:
+    global shiny_odds
+    gid = (game.get("game") or {}).get("code")
+    if gid not in SHINY_PATCH:
+        raise ValueError(f"probabilidad de variocolor: falta la dirección para el juego {gid}")
+    require_compat("shiny")
+    addr, orig = SHINY_PATCH[gid]
+    if odds is None or int(odds) >= SHINY_BASE:
+        shiny_odds = None
+        return f"P {addr:#x} {orig} {orig}"
+    odds = int(odds)
+    if odds < 2:
+        raise ValueError("odds va de 2 (la mitad) a 8192 (normal)")
+    shiny_odds = odds
+    return f"P {addr:#x} {orig} {shiny_patch_bytes(orig, shiny_rolls(odds))}"
 
 
 def require_compat(feature: str) -> None:
@@ -690,6 +737,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
     global in_flight, last_snap
     game["connected"] = True
     print("Lua conectado")
+    if shiny_odds is not None:   # el Lua nuevo no recuerda el parche: se vuelve a mandar
+        add_event(EventIn(type="set_shiny_odds", odds=shiny_odds, when="cualquiera"), "variocolor (reconexión)")
     try:
         while msg := await read_message(reader):
             kind, _, rest = msg.partition(" ")
@@ -812,6 +861,23 @@ roulette_log: collections.deque = collections.deque(maxlen=50)
 _spin_ids = itertools.count(1)
 
 
+delayed: dict = {}   # tipo de evento -> tarea que lo aplicará más tarde (uno por tipo: otro igual reinicia la espera)
+
+
+def schedule_event(e: dict, source: str) -> None:
+    """Encola el evento dentro de e["after"] segundos. Si ya había uno del mismo tipo esperando, lo sustituye."""
+    seconds = float(e.pop("after"))
+    ev = EventIn(**e)                    # se valida ya, no al vencer
+    if ev.type in delayed:
+        delayed[ev.type].cancel()
+
+    async def later():
+        await asyncio.sleep(seconds)
+        delayed.pop(ev.type, None)
+        add_event(ev, source)
+    delayed[ev.type] = asyncio.get_running_loop().create_task(later())
+
+
 async def roulette_worker() -> None:
     """Gira las tiradas de una en una: avisa al overlay (gira la rueda), espera a que pare y aplica el premio."""
     global roulette_current
@@ -825,7 +891,12 @@ async def roulette_worker() -> None:
         await asyncio.sleep(roulette.SPIN_SECONDS)
         try:
             text, evs = effects.apply(segs[idx]["effect"], game)
-            spin["events"] = [add_event(EventIn(**e), f"ruleta ({source})").id for e in evs]
+            spin["events"] = []
+            for e in evs:
+                if "after" in e:
+                    schedule_event(dict(e), f"ruleta ({source}, después)")
+                else:
+                    spin["events"].append(add_event(EventIn(**e), f"ruleta ({source})").id)
         except Exception as e:   # un premio que no se puede aplicar no para la ruleta
             text, spin["events"] = f"No se pudo aplicar: {e}", []
         spin["text"], spin["time"] = text, time.time()

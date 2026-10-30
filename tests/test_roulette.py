@@ -15,7 +15,7 @@ for eid in effects.EFFECTS:
         text, evs = effects.apply(eid, game, rng)
         assert text, eid
         for e in evs:
-            bridge.EventIn(**e)
+            bridge.EventIn(**{k: v for k, v in e.items() if k != "after"})
 
 # objetivos: nunca huevos ni debilitados; "debilitar" no deja a nadie sin poder luchar
 for _ in range(50):
@@ -87,4 +87,15 @@ assert phases == ["spin", "done"], phases
 done = sent[-1]["spin"]
 assert done["label"] == "Curar" and done["source"] == "prueba" and len(done["events"]) == 1
 assert bridge.events[done["events"][0]].data["type"] == "heal"
+# eventos para más tarde: uno por tipo, el segundo reinicia la espera
+async def later_test():
+    n = len(bridge.events)
+    bridge.schedule_event({"type": "set_shiny_odds", "after": 0.2}, "prueba")
+    await asyncio.sleep(0.1)
+    bridge.schedule_event({"type": "set_shiny_odds", "after": 0.2}, "prueba")
+    await asyncio.sleep(0.15)
+    assert len(bridge.events) == n                 # el primero se canceló, el segundo aún no vence
+    await asyncio.sleep(0.15)
+    assert len(bridge.events) == n + 1 and not bridge.delayed
+asyncio.run(later_test())
 print("OK")

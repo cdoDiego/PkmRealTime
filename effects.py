@@ -3,6 +3,7 @@
 Cada efecto tiene un texto en español y una función que, con el estado actual del juego, devuelve:
   (texto del resultado, [eventos para /events])
 Los objetivos al azar (qué Pokémon, qué especie) se eligen al aplicarlo, no al configurarlo.
+Un evento con "after": segundos se aplica más tarde (p. ej. volver a lo normal); otro igual reinicia la espera.
 """
 import random
 
@@ -108,6 +109,14 @@ def _weather(weather: str, text: str):
     return f
 
 
+def _shiny_hour(odds: int, minutes: int):
+    def f(game, rng):
+        return (f"¡Hora variocolor! 1 de cada {odds} durante {minutes} min",
+                [{"type": "set_shiny_odds", "odds": odds, "when": "cualquiera"},
+                 {"type": "set_shiny_odds", "when": "cualquiera", "after": minutes * 60}])
+    return f
+
+
 def _teleport(game, rng):
     city = rng.choice(TELEPORT_CITIES)
     return f"¡Viaje sorpresa a {city.capitalize()}!", [{"type": "teleport", "zone": city}]
@@ -133,6 +142,8 @@ EFFECTS = {
     "salvaje": ("Combate salvaje", "Un Pokémon salvaje al azar te ataca (2 niveles más que tu media)", _wild_battle, 2, True),
     "lluvia": ("Lluvia", "Empieza a llover en el mapa", _weather("rain", "¡Empieza a llover!"), 1, True),
     "nieve": ("Nieve", "Empieza a nevar en el mapa", _weather("snow", "¡Empieza a nevar!"), 1, True),
+    "variocolor": ("Hora variocolor", "Variocolor 1 de cada 50 encuentros salvajes durante 10 minutos",
+                   _shiny_hour(50, 10), 1, True),
     "viaje": ("Viaje sorpresa", "Te lleva a una ciudad al azar", _teleport, 1, False),
 }
 assert all(c in field_script.CITIES for c in TELEPORT_CITIES)
