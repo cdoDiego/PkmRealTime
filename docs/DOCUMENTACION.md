@@ -17,13 +17,15 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── happenings.py          Avisos de lo que pasa en el juego (capturas, debilitados, medallas, zona...)
 ├── boxes.py               Cajas del PC: nombres, caja abierta, Pokémon de cada caja
 ├── pc.py                  Mover y quitar Pokémon entre equipo y cajas
+├── effects.py             Catálogo de efectos con nombre (premios de la ruleta; luego Twitch y cartas)
+├── roulette.py            Ruleta: premios guardados en roulette.json y elección por peso
 ├── rom.py                 Lee datos de la ROM → gen5_data.json
 ├── gamedata.py            Carga gen5_data.json
 ├── move_pp.py             PP máximos (usa los de la ROM; tabla original de respaldo)
 ├── config.py              Direcciones de memoria y valores por defecto
 ├── config_local.example.py  Plantilla de configuración personal (copiar como config_local.py)
 ├── requirements.txt
-├── overlay/               Overlay para OBS (página de configuración + vista); lo sirve el puente en /overlay/
+├── overlay/               Overlay y ruleta para OBS (páginas de configuración + vistas); lo sirve el puente en /overlay/
 ├── lua/                   Scripts de BizHawk: connector.lua, dump_ram.lua, watch_ram.lua
 ├── tools/                 ram_tool.py (análisis de volcados)
 ├── tests/                 Pruebas (run_all.py las ejecuta todas)
@@ -33,7 +35,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 └── pk5_export/            .pk5 generados (no se suben)
 ```
 
-No se suben a git (ver `.gitignore`): `config_local.py`, ROMs y partidas, `gen5_data.json` (sale de la ROM de cada persona),
+No se suben a git (ver `.gitignore`): `config_local.py`, `roulette.json`, ROMs y partidas, `gen5_data.json` (sale de la ROM de cada persona),
 `dumps/` y `pk5_export/`.
 
 ## 1. Cómo encaja todo
@@ -648,8 +650,11 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 | `POST` | `/rollback` | Carga el savestate de la ranura 9 (estado anterior al último evento) |
 | `GET` | `/happenings?since=N` | Avisos de lo que pasó en el juego con `id` mayor que `N` (los últimos 500; ver abajo) |
 | `GET` | `/overlay/` | Página de configuración del overlay de OBS (sin token; ver sección 7b) |
+| `GET` | `/roulette` | Ruleta: catálogo de efectos, premios guardados, tirada en curso (`spinning`), cola (`queued`) y últimas 10 tiradas (`last`) |
+| `PUT` | `/roulette` | Guarda los premios (`{"prizes": [{"effect", "label", "weight" 0-10, "enabled"}]}`) o vuelve a los de fábrica (`{"reset": true}`); 400 si no queda ninguno activo |
+| `POST` | `/roulette/spin` | Encola una tirada (`{"source": "quién"}`, opcional; máx. 50 en cola) |
 | `GET` | `/overlay-token` | Devuelve el token, solo si la petición viene de esta computadora (127.0.0.1); lo usa el overlay |
-| `WS` | `/ws?token=...` | Avisos en vivo del estado (`kind: state`), de los eventos (`kind: event`) y de lo que pasa en el juego (`kind: happening`) |
+| `WS` | `/ws?token=...` | Avisos en vivo del estado (`kind: state`), de los eventos (`kind: event`) de lo que pasa en el juego (`kind: happening`) y de la ruleta (`kind: roulette`, `phase: spin` / `done`) |
 
 **Avisos (`happenings.py`):** el puente compara cada lectura con la anterior y sigue a cada Pokémon por su PID (equipo y
 todas las cajas). Cada aviso trae `id`, `time`, `type` y sus datos (`pid`, `species`, `name`, `level`, `where`, `slot`...):
@@ -809,6 +814,24 @@ Notas:
 - CSS: `[hidden] { display: none !important; }`, porque un `display` propio gana al atributo `hidden` (el aviso "esperando
   al puente" no se ocultaba).
 - Mejoras visuales pendientes (no urgentes): pulir el diseño de las tarjetas y avisos.
+
+### Ruleta (`ruleta.html`, `ruleta-view.html`, `effects.py`, `roulette.py`)
+
+- **Configurar:** pestaña *Ruleta* de la página del overlay. Cada premio tiene casilla, nombre editable y barra de peso
+  (0-10) con el % real; se guarda solo en `roulette.json` (no se sube a git). "Volver a los de fábrica" lo restablece.
+  Botón "Girar ahora", historial de tiradas, vista previa (gira sola cada 12 s sin aplicar nada) y dirección para OBS
+  (tamaño de la rueda `size` y segundos del resultado `hold`; también `always=1` para no esconderla).
+- **Girar:** `POST /roulette/spin` (botón, Postman y luego Twitch). El puente elige el premio por peso, manda
+  `kind: roulette, phase: spin` (segmentos, ganador, segundos) para que la rueda gire, espera `SPIN_SECONDS` (7 s), aplica
+  el efecto (encola eventos normales con origen "ruleta (quién)") y manda `phase: done` con el texto del resultado.
+  Las tiradas van de una en una, con 4 s entre ellas.
+- **Rueda:** invisible en OBS hasta que alguien gira; cada segmento mide según su probabilidad.
+- **Efectos (`effects.py`):** cada uno da un texto y una lista de eventos según el estado del juego al aplicarse
+  (objetivos al azar: nunca huevos ni debilitados; "Debilitar a uno" nunca deja el equipo sin nadie en pie). De fábrica:
+  nada, curar, Poké/Ultra/Master Ball, caramelo raro, revivir, ±dinero, Pokémon al azar (o variocolor) a la caja 1 del
+  nivel medio, parálisis/sueño a uno, veneno a todos, debilitar a uno, combate salvaje (+2 niveles), lluvia, nieve y
+  viaje a una ciudad. Desactivados de fábrica: Master Ball, variocolor, debilitar y viaje.
+- Pendiente: acomodar opciones y diseño (MVP validado).
 - La carpeta no depende de Python: se puede mover a otro proyecto cambiando solo de dónde se sirve.
 
 ---
@@ -868,6 +891,7 @@ Notas:
 | 29-oct | Avisos de lo que pasa en el juego (`happenings.py`, `GET /happenings`, `kind: happening` en el WebSocket). Validado en la Ruta 20: inicio y fin del combate, Purrloin del equipo debilitado, Purrloin capturado (`caught`, a la caja 1, lugar Route 20) y los dos cambios de zona. El lugar de encuentro del PK5 (`0x80`) usa la misma lista que los nombres de zona (texto 109). |
 | 29-oct | Cajas 2-24 (`boxes.py`: bloque 0 con nombres, caja abierta y nº de cajas; el Lua manda la abierta y otra por turnos) y `move_pokemon` / `remove_pokemon` (`pc.py`). Validado: equipo → caja 2 (Patrat; el equipo se ve bien con 5), caja 1 → equipo (Eevee nivel 20, 53/53 PS, ficha correcta), liberar de la caja 2; avisos `moved` y `left`. Guardar en el juego y reiniciar: carga sin error, Eevee sigue en el equipo y las cajas vacías. |
 | 29-oct | Overlay de OBS (`overlay/`, servido por el puente en `/overlay/`): página de configuración con atajos y vista previa, vista con lugar, medallas, equipo (sprites, PS, estado) y avisos animados. El token se rellena solo desde esta computadora (`/overlay-token`). Arreglos: faltaba `websockets` (WebSocket rechazado), Ctrl+C no cerraba el puente con el overlay abierto, un overlay que dejaba de leer trababa BizHawk (ahora cada cliente tiene su cola) y el aviso de conexión no se ocultaba. Validado con el juego: cambios de ruta, ciudad y equipo en vivo, sin trabas. |
+| 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 
 ---
 

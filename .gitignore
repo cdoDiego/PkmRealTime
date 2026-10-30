@@ -1,5 +1,6 @@
 # --- Configuración personal (rutas, tokens) -----------------------------------
 config_local.py
+roulette.json
 
 # --- Juegos y partidas: nunca se suben (copyright y archivos personales) -------
 *.nds

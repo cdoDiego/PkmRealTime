@@ -76,10 +76,10 @@ const DEMO_HAPPENINGS = [
 ];
 
 // Conecta con el puente y llama a onState(state) y onHappening(h). Se reconecta solo.
-function connectBridge({ onState, onHappening, onStatus, demo }) {
+function connectBridge({ onState, onHappening, onStatus, onRoulette, demo }) {
   if (demo) {
     onStatus && onStatus("demo");
-    onState(DEMO_STATE);
+    onState && onState(DEMO_STATE);
     let i = 0;
     setInterval(() => onHappening && onHappening(DEMO_HAPPENINGS[i++ % DEMO_HAPPENINGS.length]), 4000);
     return;
@@ -94,6 +94,7 @@ function connectBridge({ onState, onHappening, onStatus, demo }) {
       const msg = JSON.parse(m.data);
       if (msg.kind === "state") onState(msg.state);
       else if (msg.kind === "happening") onHappening && onHappening(msg.happening);
+      else if (msg.kind === "roulette") onRoulette && onRoulette(msg);
     };
     ws.onclose = (e) => {
       onStatus && onStatus(e.code === 4401 ? "token" : "off");

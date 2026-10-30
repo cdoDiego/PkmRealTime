@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
@@ -35,12 +35,14 @@ import boxes
 import battle
 import battle_cmd
 import config
+import effects
 import encounters
 import field_script
 import gamedata
 import gift
 import happenings
 import pc
+import roulette
 import pk5
 
 # ---------------------------------------------------------------- modelos
@@ -801,6 +803,68 @@ async def get_state(x_token: Optional[str] = Header(None)):
     return game
 
 
+# ---------------------------------------------------------------- ruleta
+
+ROULETTE_MAX_QUEUE = 50
+roulette_queue: Optional[asyncio.Queue] = None      # se crea en main() (necesita el bucle de asyncio)
+roulette_current: Optional[dict] = None
+roulette_log: collections.deque = collections.deque(maxlen=50)
+_spin_ids = itertools.count(1)
+
+
+async def roulette_worker() -> None:
+    """Gira las tiradas de una en una: avisa al overlay (gira la rueda), espera a que pare y aplica el premio."""
+    global roulette_current
+    while True:
+        source = await roulette_queue.get()
+        segs, idx = roulette.pick(roulette.load())
+        spin = {"id": next(_spin_ids), "source": source, "seconds": roulette.SPIN_SECONDS, "result": idx,
+                "segments": [{"label": p["label"], "weight": p["weight"]} for p in segs], "label": segs[idx]["label"]}
+        roulette_current = spin
+        await broadcast({"kind": "roulette", "phase": "spin", "spin": spin})
+        await asyncio.sleep(roulette.SPIN_SECONDS)
+        try:
+            text, evs = effects.apply(segs[idx]["effect"], game)
+            spin["events"] = [add_event(EventIn(**e), f"ruleta ({source})").id for e in evs]
+        except Exception as e:   # un premio que no se puede aplicar no para la ruleta
+            text, spin["events"] = f"No se pudo aplicar: {e}", []
+        spin["text"], spin["time"] = text, time.time()
+        roulette_log.append(spin)
+        await broadcast({"kind": "roulette", "phase": "done", "spin": spin})
+        await asyncio.sleep(4)   # tiempo para leer el resultado antes de la siguiente tirada
+        roulette_current = None
+
+
+@app.get("/roulette")
+async def get_roulette(x_token: Optional[str] = Header(None)):
+    auth(x_token)
+    return {"effects": effects.catalog(), "prizes": roulette.load(), "spin_seconds": roulette.SPIN_SECONDS,
+            "spinning": roulette_current, "queued": roulette_queue.qsize() if roulette_queue else 0,
+            "last": list(roulette_log)[-10:]}
+
+
+@app.put("/roulette")
+async def put_roulette(body: dict = Body(...), x_token: Optional[str] = Header(None)):
+    auth(x_token)
+    try:
+        if body.get("reset"):   # volver a los premios de fábrica
+            return {"prizes": roulette.save(effects.default_prizes())}
+        return {"prizes": roulette.save(body.get("prizes") or [])}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/roulette/spin")
+async def spin_roulette(body: dict = Body(default={}), x_token: Optional[str] = Header(None)):
+    who = auth(x_token)
+    if roulette_queue is None:
+        raise HTTPException(503, "la ruleta aún no está lista")
+    if roulette_queue.qsize() >= ROULETTE_MAX_QUEUE:
+        raise HTTPException(429, f"ya hay {ROULETTE_MAX_QUEUE} tiradas en cola")
+    roulette_queue.put_nowait(str(body.get("source") or who)[:40])
+    return {"queued": roulette_queue.qsize(), "spinning": roulette_current is not None}
+
+
 @app.get("/overlay-token")
 async def overlay_token(request: Request):
     """Token para la página del overlay, solo si se abre desde esta misma computadora (así nadie lo copia a mano)."""
@@ -837,7 +901,10 @@ async def ws(websocket: WebSocket, token: str = ""):
 
 
 async def main() -> None:
+    global roulette_queue
     prepare_data()
+    roulette_queue = asyncio.Queue()
+    worker = asyncio.create_task(roulette_worker())
     lua_server = await asyncio.start_server(handle_lua, config.BRIDGE_HOST, config.LUA_PORT)
     # timeout_graceful_shutdown: al pulsar Ctrl+C no se espera a que el overlay (WebSocket abierto) cierre solo
     api = uvicorn.Server(uvicorn.Config(app, host=config.BRIDGE_HOST, port=config.API_PORT, log_level="info",
@@ -849,6 +916,7 @@ async def main() -> None:
         lua_task = asyncio.create_task(lua_server.serve_forever())
         await api.serve()          # termina con Ctrl+C
         lua_task.cancel()
+        worker.cancel()
 
 
 if __name__ == "__main__":

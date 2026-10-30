@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ruleta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  [hidden] { display: none !important; }
+  :root { --size: 460px; --text: #f4f6fb; --card: rgba(18, 22, 34, 0.88); --accent: #ffcb05; }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font-family: "Nunito", "Segoe UI", system-ui, sans-serif; color: var(--text);
+         display: flex; flex-direction: column; align-items: center; padding: 12px; }
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 14px;
+           transition: opacity 0.5s, transform 0.5s; }
+  .stage.away { opacity: 0; transform: scale(0.85); }
+  .who { background: var(--card); border-radius: 999px; padding: 6px 16px; font-weight: 800; font-size: calc(var(--size) * 0.04); }
+  .wheel-box { position: relative; width: var(--size); height: var(--size); }
+  canvas { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.55)); }
+  .pointer { position: absolute; left: 50%; top: -6px; transform: translateX(-50%); width: 0; height: 0;
+             border-left: calc(var(--size) * 0.045) solid transparent; border-right: calc(var(--size) * 0.045) solid transparent;
+             border-top: calc(var(--size) * 0.09) solid var(--accent); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.7)); }
+  .hub { position: absolute; left: 50%; top: 50%; width: 16%; height: 16%; transform: translate(-50%, -50%);
+         border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, #ddd 45%, #999);
+         border: calc(var(--size) * 0.012) solid #222; box-sizing: border-box; }
+  .result { max-width: calc(var(--size) * 1.3); text-align: center; background: var(--card);
+            border: 2px solid var(--accent); border-radius: 16px; padding: 10px 18px;
+            font-weight: 900; font-size: calc(var(--size) * 0.055); animation: pop 0.4s ease-out; }
+  .result small { display: block; font-weight: 700; font-size: 0.6em; opacity: 0.85; margin-top: 2px; }
+  @keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+  .notice { background: rgba(239, 83, 80, 0.9); color: #fff; font-weight: 700; border-radius: 8px; padding: 5px 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="notice" id="notice" hidden></div>
+<div class="stage away" id="stage" hidden>
+  <div class="who" id="who" hidden></div>
+  <div class="wheel-box">
+    <canvas id="wheel" width="800" height="800"></canvas>
+    <div class="pointer"></div>
+    <div class="hub"></div>
+  </div>
+  <div class="result" id="result" hidden></div>
+</div>
+<script src="common.js"></script>
+<script>
+"use strict";
+// Opciones por la URL:  size=460 (px de la rueda)  hold=6 (s que se ve el resultado)  always=1 (no se esconde)  demo=1
+const size = Math.max(200, Number(params.get("size") || 460));
+const hold = Math.max(2, Number(params.get("hold") || 6)) * 1000;
+const always = params.get("always") === "1";
+document.documentElement.style.setProperty("--size", size + "px");
+
+const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#8e24aa", "#fb8c00", "#00acc1", "#d81b60",
+                "#7cb342", "#3949ab", "#f4511e", "#00897b"];
+const stage = document.getElementById("stage"), canvas = document.getElementById("wheel");
+const resultEl = document.getElementById("result"), whoEl = document.getElementById("who");
+const notice = document.getElementById("notice");
+let angle = 0, hideTimer = null, currentId = null;
+
+// Ángulos de cada segmento (proporcionales al peso), empezando arriba y en sentido horario
+function arcs(segs) {
+  const total = segs.reduce((a, s) => a + s.weight, 0);
+  let a = 0;
+  return segs.map(s => { const a0 = a; a += s.weight / total * 2 * Math.PI; return [a0, a]; });
+}
+
+function draw(segs) {
+  const ctx = canvas.getContext("2d"), r = canvas.width / 2;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(r, r);
+  arcs(segs).forEach(([a0, a1], i) => {
+    // el 0 del canvas está a la derecha; se resta 90° para que el 0 sea arriba
+    ctx.beginPath(); ctx.moveTo(0, 0);
+    ctx.arc(0, 0, r - 8, a0 - Math.PI / 2, a1 - Math.PI / 2);
+    ctx.closePath();
+    // con un número impar de segmentos, el último no repite el color del primero
+    let c = i % COLORS.length;
+    if (i === segs.length - 1 && c === 0 && i > 0) c = 1;
+    ctx.fillStyle = COLORS[c]; ctx.fill();
+    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.stroke();
+    // texto a lo largo del radio
+    const mid = (a0 + a1) / 2 - Math.PI / 2, span = a1 - a0;
+    ctx.save();
+    ctx.rotate(mid);
+    const fs = Math.min(40, Math.max(16, span * r * 0.33));
+    ctx.font = `900 ${fs}px Nunito, "Segoe UI", sans-serif`;
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,0.6)"; ctx.lineWidth = fs * 0.18; ctx.lineJoin = "round";
+    let label = segs[i].label;
+    while (label.length > 3 && ctx.measureText(label).width > r * 0.68) label = label.slice(0, -2) + "…";
+    ctx.strokeText(label, r - 30, 0); ctx.fillText(label, r - 30, 0);
+    ctx.restore();
+  });
+  ctx.beginPath(); ctx.arc(0, 0, r - 6, 0, 2 * Math.PI); ctx.lineWidth = 10; ctx.strokeStyle = "#222"; ctx.stroke();
+  ctx.restore();
+}
+
+function setAngle(a) { angle = a; canvas.style.transform = `rotate(${a}rad)`; }
+
+function show() {
+  clearTimeout(hideTimer);
+  stage.hidden = false;
+  requestAnimationFrame(() => stage.classList.remove("away"));
+}
+function hideLater() {
+  if (always) return;
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { stage.classList.add("away"); hideTimer = setTimeout(() => stage.hidden = true, 600); }, hold);
+}
+
+function spin(s) {
+  currentId = s.id;
+  draw(s.segments);
+  resultEl.hidden = true;
+  whoEl.hidden = !s.source;
+  whoEl.textContent = s.source ? `Tirada de ${s.source}` : "";
+  show();
+  // punto al azar dentro del segmento ganador (sin rozar los bordes), y varias vueltas antes
+  const [a0, a1] = arcs(s.segments)[s.result];
+  const target = a0 + (a1 - a0) * (0.15 + Math.random() * 0.7);
+  const start = angle % (2 * Math.PI);
+  const turns = 5 + Math.floor(s.seconds / 2);
+  const end = turns * 2 * Math.PI - target;   // el puntero (arriba) queda sobre "target"
+  const ms = s.seconds * 1000 - 300, t0 = performance.now();
+  setAngle(start);
+  const ease = t => 1 - Math.pow(1 - t, 4);
+  function frame(now) {
+    const t = Math.min(1, (now - t0) / ms);
+    setAngle(start + (end - start) * ease(t));
+    if (t < 1) requestAnimationFrame(frame);
+    else if (!s.text) { resultEl.textContent = s.label; resultEl.hidden = false; }   // por si "done" tarda
+  }
+  requestAnimationFrame(frame);
+}
+
+function done(s) {
+  if (currentId !== s.id) { draw(s.segments); currentId = s.id; show(); }
+  resultEl.replaceChildren(document.createTextNode(s.label), el("small", "", s.text || ""));
+  resultEl.hidden = false;
+  hideLater();
+}
+
+function onRoulette(msg) { msg.phase === "spin" ? spin(msg.spin) : done(msg.spin); }
+
+if (params.get("demo") === "1") {
+  // Vista previa: usa los premios guardados (o unos de ejemplo) y tira cada 12 s
+  const fallback = [{ label: "Curar equipo", weight: 3 }, { label: "5 Poké Balls", weight: 3 }, { label: "Nada", weight: 3 },
+                    { label: "Combate salvaje", weight: 2 }, { label: "Parálisis", weight: 2 }, { label: "Caramelo raro", weight: 2 }];
+  let n = 0;
+  async function demoSpin() {
+    let segs = fallback;
+    try {
+      await ensureToken();
+      const r = await fetch("/roulette", { headers: { "X-Token": TOKEN } });
+      if (r.ok) segs = (await r.json()).prizes.filter(p => p.enabled && p.weight > 0);
+    } catch (e) {}
+    const total = segs.reduce((a, s) => a + s.weight, 0);
+    let x = Math.random() * total, idx = 0;
+    while (x > segs[idx].weight) { x -= segs[idx].weight; idx++; }
+    const s = { id: "demo" + n++, source: "vista previa", seconds: 5, result: idx, segments: segs, label: segs[idx].label };
+    onRoulette({ phase: "spin", spin: s });
+    setTimeout(() => onRoulette({ phase: "done", spin: { ...s, text: "(ejemplo: no se aplica nada)" } }), 5000);
+  }
+  demoSpin(); setInterval(demoSpin, 12000);
+} else {
+  connectBridge({
+    onRoulette,
+    onStatus: st => {
+      notice.hidden = st === "ok";
+      notice.textContent = st === "token" ? "Ruleta: token incorrecto (revisa la URL)" : "Ruleta: esperando al puente…";
+    },
+  });
+}
+if (always) { draw([{ label: "Ruleta", weight: 1 }]); show(); }
+</script>
+</body>
+</html>

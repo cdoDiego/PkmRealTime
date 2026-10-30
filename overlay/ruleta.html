@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ruleta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+<style>
+  .layout { grid-template-columns: 1fr 420px; }
+  @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+  .prizes { width: 100%; border-collapse: collapse; }
+  .prizes td { padding: 7px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+  .prizes tr.off td:not(:first-child) { opacity: 0.45; }
+  .prizes input[type=text] { width: 100%; min-width: 120px; font: inherit; font-weight: 700; padding: 6px 8px; border-radius: 8px;
+                             border: 1px solid var(--line); background: var(--chip); color: var(--text); }
+  .prizes input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+  .prizes .desc { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+  .prizes .weight { width: 150px; }
+  .prizes .pct { width: 52px; text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .big { font-size: 1.15rem; padding: 14px 18px; width: 100%; }
+  .saved { color: var(--muted); font-size: 0.9rem; font-weight: 700; }
+  .saved.err { color: var(--bad); }
+  .history { list-style: none; padding: 0; margin: 10px 0 0; }
+  .history li { padding: 7px 0; border-top: 1px solid var(--line); }
+  .history b { display: block; }
+  .history span { color: var(--muted); font-size: 0.88rem; }
+  .preview iframe { height: 600px; }
+  @media (max-width: 600px) { .prizes .weight { width: 90px; } .prizes .desc { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="index.html">Overlay</a><a href="ruleta.html" aria-current="page">Ruleta</a></nav>
+  <h1>Ruleta</h1>
+  <p class="lead">Elige los premios y cuánto sale cada uno. Al girar, la rueda aparece en OBS y el premio se aplica en el juego
+    cuando se para.</p>
+
+  <div class="status">
+    <div class="pill" id="st-bridge"><span class="dot"></span>Puente</div>
+    <div class="pill" id="st-game"><span class="dot"></span>Juego (BizHawk)</div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px">
+        <h2 style="margin:0">Premios</h2>
+        <div class="row">
+          <span class="saved" id="saved"></span>
+          <button type="button" id="reset">Volver a los de fábrica</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:0">Marca los que quieres en la rueda. La barra decide cuánto sale cada uno (más a la
+        derecha = más probable); el % es la probabilidad real. Los cambios se guardan solos.</p>
+      <table class="prizes"><tbody id="rows"></tbody></table>
+    </div>
+
+    <div>
+      <div class="panel" style="margin-bottom:20px">
+        <button type="button" class="primary big" id="spin">🎡 Girar ahora</button>
+        <p class="hint" id="queue" style="margin:8px 0 0">El premio se aplica de verdad en el juego.</p>
+        <ul class="history" id="history"></ul>
+      </div>
+
+      <div class="panel" style="margin-bottom:20px">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <h2 style="margin:0">Vista previa</h2>
+          <span class="hint">gira sola cada 12 s, sin aplicar nada</span>
+        </div>
+        <div class="preview"><iframe id="frame" title="Vista previa de la ruleta"></iframe></div>
+      </div>
+
+      <div class="panel">
+        <h2>Ponerla en OBS</h2>
+        <div class="hint">Tamaño de la rueda: <b id="size-label">460</b> px</div>
+        <input type="range" id="size" min="260" max="800" step="20" value="460">
+        <div class="hint" style="margin-top:8px">El resultado se ve <b id="hold-label">6</b> segundos</div>
+        <input type="range" id="hold" min="3" max="15" step="1" value="6">
+        <div class="row" style="margin-top:12px">
+          <input class="url" id="url" readonly aria-label="Dirección para OBS">
+          <button type="button" class="primary" id="copy">Copiar</button>
+          <span class="copied" id="copied" hidden>¡Copiada!</span>
+        </div>
+        <ol>
+          <li>En OBS, en <b>Fuentes</b>, pulsa <b>+</b> y elige <b>Navegador</b>.</li>
+          <li>Pega la dirección en <b>URL</b>.</li>
+          <li>Pon de ancho <b id="w">640</b> y de alto <b id="h">700</b>.</li>
+          <li>Pulsa <b>Aceptar</b>. La rueda es invisible hasta que alguien gira.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</main>
+<script src="common.js"></script>
+<script src="admin.js"></script>
+<script>
+"use strict";
+const rowsEl = document.getElementById("rows"), savedEl = document.getElementById("saved");
+let effects = {}, prizes = [], saveTimer = null;
+
+function percent() {
+  const total = prizes.reduce((a, p) => a + (p.enabled ? p.weight : 0), 0);
+  prizes.forEach((p, i) => {
+    const v = p.enabled && total ? p.weight / total * 100 : 0;
+    document.getElementById("pct" + i).textContent = v ? (v < 1 ? "<1 %" : Math.round(v) + " %") : "—";
+    document.getElementById("row" + i).classList.toggle("off", !p.enabled || !p.weight);
+  });
+}
+
+function render() {
+  rowsEl.replaceChildren();
+  prizes.forEach((p, i) => {
+    const tr = el("tr"); tr.id = "row" + i;
+    const on = el("input"); on.type = "checkbox"; on.checked = p.enabled; on.setAttribute("aria-label", "Activar " + p.label);
+    on.addEventListener("change", () => { p.enabled = on.checked; changed(); });
+    const name = el("input"); name.type = "text"; name.value = p.label; name.maxLength = 24;
+    name.addEventListener("input", () => { p.label = name.value; changed(); });
+    const info = el("td"); info.append(name, el("div", "desc", (effects[p.effect] || {}).description || ""));
+    const w = el("input"); w.type = "range"; w.min = 0; w.max = 10; w.value = p.weight; w.setAttribute("aria-label", "Probabilidad de " + p.label);
+    w.addEventListener("input", () => { p.weight = Number(w.value); changed(); });
+    const tdOn = el("td"); tdOn.append(on);
+    const tdW = el("td", "weight"); tdW.append(w);
+    const pct = el("td", "pct"); pct.id = "pct" + i;
+    tr.append(tdOn, info, tdW, pct);
+    rowsEl.append(tr);
+  });
+  percent();
+}
+
+function changed() {
+  percent();
+  savedEl.className = "saved"; savedEl.textContent = "Guardando…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 600);
+}
+
+async function save() {
+  try {
+    await api("PUT", "/roulette", { prizes });
+    savedEl.className = "saved"; savedEl.textContent = "Guardado ✓";
+  } catch (e) {
+    savedEl.className = "saved err"; savedEl.textContent = e.message;
+  }
+}
+
+async function load() {
+  await ensureToken().catch(() => {});
+  const r = await api("GET", "/roulette");
+  effects = Object.fromEntries(r.effects.map(e => [e.id, e]));
+  // premios nuevos del catálogo que aún no están en la lista guardada: al final, desactivados
+  const have = new Set(r.prizes.map(p => p.effect));
+  prizes = r.prizes.concat(r.effects.filter(e => !have.has(e.id))
+                                   .map(e => ({ effect: e.id, label: e.label, weight: 1, enabled: false })));
+  render();
+  showStatus(r);
+}
+
+function showStatus(r) {
+  const q = document.getElementById("queue");
+  q.textContent = r.spinning ? `Girando…${r.queued ? ` (${r.queued} más en cola)` : ""}`
+                             : r.queued ? `${r.queued} en cola` : "El premio se aplica de verdad en el juego.";
+  const h = document.getElementById("history");
+  h.replaceChildren(...r.last.slice().reverse().map(s => {
+    const li = el("li");
+    const when = new Date(s.time * 1000).toLocaleTimeString();
+    li.append(el("b", "", `${s.label} — ${s.text}`), el("span", "", `${when} · ${s.source}`));
+    return li;
+  }));
+}
+
+document.getElementById("reset").addEventListener("click", async () => {
+  if (!confirm("¿Volver a la lista de premios de fábrica? Se pierden los cambios.")) return;
+  const r = await api("GET", "/roulette");
+  prizes = r.effects.map(e => ({ effect: e.id, label: e.label, weight: 1, enabled: true }));
+  // pesos y activos de fábrica: los da el puente al borrar la configuración
+  try { const d = await api("PUT", "/roulette", { reset: true }); prizes = d.prizes; } catch (e) {}
+  render(); savedEl.textContent = "Guardado ✓";
+});
+
+document.getElementById("spin").addEventListener("click", async () => {
+  try { await api("POST", "/roulette/spin", { source: "botón" }); poll(); }
+  catch (e) { alert("No se pudo girar: " + e.message); }
+});
+
+async function poll() { try { showStatus(await api("GET", "/roulette")); } catch (e) {} }
+
+// Dirección para OBS
+const sizeIn = document.getElementById("size"), holdIn = document.getElementById("hold"), frame = document.getElementById("frame");
+let lastPreview = "";
+function viewUrl(demo) {
+  const q = new URLSearchParams({ size: sizeIn.value, hold: holdIn.value, token: TOKEN });
+  if (demo) q.set("demo", "1");
+  return `${location.origin}${location.pathname.replace(/[^/]*$/, "")}ruleta-view.html?${q}`;
+}
+function update() {
+  const s = Number(sizeIn.value);
+  document.getElementById("size-label").textContent = s;
+  document.getElementById("hold-label").textContent = holdIn.value;
+  document.getElementById("w").textContent = Math.round(Math.max(s * 1.35, s + 40) / 10) * 10;
+  document.getElementById("h").textContent = Math.round((s * 1.45 + 60) / 10) * 10;
+  document.getElementById("url").value = viewUrl(false);
+  const p = viewUrl(true);
+  if (p !== lastPreview) { frame.src = p; lastPreview = p; }
+  try { localStorage.setItem("roulette-view", JSON.stringify({ size: sizeIn.value, hold: holdIn.value })); } catch (e) {}
+}
+try { const o = JSON.parse(localStorage.getItem("roulette-view")); if (o) { sizeIn.value = o.size; holdIn.value = o.hold; } } catch (e) {}
+sizeIn.addEventListener("input", update);
+holdIn.addEventListener("input", update);
+copyButton("copy", "url", "copied");
+
+load().then(update).catch(e => { savedEl.className = "saved err"; savedEl.textContent = "No se pudo leer la ruleta: " + e.message; update(); });
+watchStatus(update);
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

@@ -4213,6 +4213,177 @@
           }
         }
       ]
+    },
+    {
+      "name": "11. Ruleta",
+      "item": [
+        {
+          "name": "Ver ruleta (premios, cola, últimas tiradas)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roulette",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roulette"
+              ]
+            },
+            "description": "Catálogo de efectos, premios guardados, tirada en curso, cola y últimas 10 tiradas."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test('hay premios', () => pm.expect(r.prizes.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Girar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roulette/spin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roulette",
+                "spin"
+              ]
+            },
+            "description": "Encola una tirada. La rueda gira en el overlay (ruleta-view.html) y el premio se aplica al pararse (7 s).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"Postman\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Guardar premios (solo curar y Poké Balls)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roulette",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roulette"
+              ]
+            },
+            "description": "Reemplaza la lista de premios. Peso 0-10; los no incluidos desaparecen (la página los vuelve a mostrar desactivados).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prizes\": [\n    {\n      \"effect\": \"curar\",\n      \"label\": \"Curar equipo\",\n      \"weight\": 1,\n      \"enabled\": true\n    },\n    {\n      \"effect\": \"pokeballs\",\n      \"label\": \"5 Poké Balls\",\n      \"weight\": 1,\n      \"enabled\": true\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Premios de fábrica",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roulette",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roulette"
+              ]
+            },
+            "description": "Vuelve a la lista de premios de fábrica.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Premios sin ninguno activo (fallo esperado)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roulette",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roulette"
+              ]
+            },
+            "description": "Debe dar 400.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prizes\": [\n    {\n      \"effect\": \"curar\",\n      \"weight\": 0,\n      \"enabled\": true\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
