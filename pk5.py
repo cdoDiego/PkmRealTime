@@ -109,6 +109,17 @@ def is_valid(plain: bytes) -> bool:
     return checksum(plain) == struct.unpack_from("<H", plain, 6)[0]
 
 
+def nickname(plain: bytes) -> str:
+    """Mote (0x48, 11 caracteres UTF-16 terminados en 0xFFFF)."""
+    out = []
+    for i in range(0x48, 0x5E, 2):
+        c = plain[i] | plain[i + 1] << 8
+        if c == 0xFFFF:
+            break
+        out.append(chr(c))
+    return "".join(out)
+
+
 def summary(plain: bytes) -> dict:
     """Resumen legible de un Pokémon descifrado."""
     u16 = lambda o: struct.unpack_from("<H", plain, o)[0]
@@ -130,6 +141,7 @@ def summary(plain: bytes) -> dict:
         hidden_ability=bool(plain[0x42] & 1),
         nature=plain[0x41],
         egg=bool(struct.unpack_from("<I", plain, 0x38)[0] >> 30 & 1),   # bit 30 de las IV
+        nickname=nickname(plain),
     )
     if info["egg"]:
         info["egg_cycles"] = plain[0x14]   # en un huevo, la amistad cuenta los ciclos que faltan (256 pasos cada uno)

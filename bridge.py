@@ -1,6 +1,6 @@
 """Puente: API HTTP/WebSocket para la app externa + servidor TCP para el Lua de BizHawk.
 
-Ejecutar:  pip install fastapi uvicorn
+Ejecutar:  pip install fastapi uvicorn websockets
            python bridge.py
 
 Protocolo con Lua (texto, una petición por mensaje):
@@ -26,7 +26,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 import bag
@@ -135,7 +136,55 @@ last_snap = None               # última lectura para los avisos (happenings.py)
 happening_log: collections.deque = collections.deque(maxlen=500)
 _happening_ids = itertools.count(1)
 in_flight: Optional[int] = None
-ws_clients: set[WebSocket] = set()
+
+
+class WsClient:
+    """Un overlay/app conectado por WebSocket. Tiene su propia cola y su propia tarea de envío: si el navegador deja de
+    leer (pestaña congelada, DevTools en pausa), solo se atrasa él; el puente sigue contestando al Lua y el juego no se traba."""
+    MAX_PENDING = 200          # avisos y eventos sin enviar; si se pasa, el cliente se da por muerto
+    SEND_TIMEOUT = 10          # segundos para enviar un mensaje antes de cerrar la conexión
+
+    def __init__(self, websocket: WebSocket):
+        self.ws = websocket
+        self.pending: collections.deque = collections.deque()   # avisos y eventos: se mandan todos, en orden
+        self.state: Optional[str] = None                        # estado: solo importa el último
+        self.wake = asyncio.Event()
+        self.dead = False
+
+    def push(self, text: str, is_state: bool) -> None:
+        if self.dead:
+            return
+        if is_state:
+            self.state = text
+        elif len(self.pending) >= self.MAX_PENDING:
+            self.dead = True
+        else:
+            self.pending.append(text)
+        self.wake.set()
+
+    async def run(self) -> None:
+        try:
+            while not self.dead:
+                await self.wake.wait()
+                self.wake.clear()
+                while not self.dead and (self.pending or self.state is not None):
+                    if self.pending:
+                        text = self.pending.popleft()
+                    else:
+                        text, self.state = self.state, None
+                    await asyncio.wait_for(self.ws.send_text(text), self.SEND_TIMEOUT)
+        except Exception:
+            pass
+        finally:
+            self.dead = True
+            ws_clients.discard(self)
+            try:
+                await asyncio.wait_for(self.ws.close(), 1)
+            except Exception:
+                pass
+
+
+ws_clients: set[WsClient] = set()
 
 # ---------------------------------------------------------------- lógica de eventos
 
@@ -379,7 +428,9 @@ def update_party(hexdata: str) -> None:
     raw = bytes.fromhex(hexdata) if hexdata else b""
     size = config.PARTY_SLOT_SIZE
     party_raw[:] = [raw[i:i + size] for i in range(0, len(raw) - size + 1, size)]
-    game["party"] = [pk5.summary(pk5.decrypt(r)) for r in party_raw]
+    species = gamedata.DATA.get("species", {})
+    game["party"] = [{**s, "name": species.get(str(s["species"]), {}).get("name", "")}
+                     for s in (pk5.summary(pk5.decrypt(r)) for r in party_raw)]
     for p in list(pending_eggs):
         new = [i for i, m in enumerate(game["party"])
                if m["valid"] and m.get("egg") and m["species"] == p["species"] and i not in p["known"]]
@@ -389,15 +440,20 @@ def update_party(hexdata: str) -> None:
     # slots vacíos o inválidos se marcan con valid=False; la app puede ocultarlos
 
 
+_last_state_text: Optional[str] = None
+
+
 async def broadcast(msg: dict) -> None:
-    dead = []
-    for ws in ws_clients:
-        try:
-            await ws.send_text(json.dumps(msg))
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        ws_clients.discard(ws)
+    """Deja el mensaje en la cola de cada cliente y vuelve enseguida (nunca espera a un navegador)."""
+    global _last_state_text
+    text = json.dumps(msg)
+    is_state = msg.get("kind") == "state"
+    if is_state:
+        if text == _last_state_text:   # sin cambios: no se reenvía
+            return
+        _last_state_text = text
+    for c in list(ws_clients):
+        c.push(text, is_state)
 
 # ---------------------------------------------------------------- servidor TCP para Lua
 
@@ -680,6 +736,9 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
 # ---------------------------------------------------------------- API
 
 app = FastAPI(title="White 2 en tiempo real")
+OVERLAY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay")
+if os.path.isdir(OVERLAY_DIR):   # páginas para OBS (fuente de navegador); leen el estado por el WebSocket con ?token=
+    app.mount("/overlay", StaticFiles(directory=OVERLAY_DIR, html=True), name="overlay")
 
 
 def auth(token: Optional[str]) -> str:
@@ -742,6 +801,14 @@ async def get_state(x_token: Optional[str] = Header(None)):
     return game
 
 
+@app.get("/overlay-token")
+async def overlay_token(request: Request):
+    """Token para la página del overlay, solo si se abre desde esta misma computadora (así nadie lo copia a mano)."""
+    if not request.client or request.client.host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(403, "solo desde esta computadora")
+    return {"token": next(iter(config.API_TOKENS), "")}
+
+
 @app.post("/rollback")
 async def rollback(x_token: Optional[str] = Header(None)):
     return await post_event(EventIn(type="rollback", when="cualquiera"), x_token)
@@ -753,21 +820,35 @@ async def ws(websocket: WebSocket, token: str = ""):
         await websocket.close(code=4401)
         return
     await websocket.accept()
-    ws_clients.add(websocket)
+    client = WsClient(websocket)
+    client.push(json.dumps({"kind": "state", "state": game}), True)   # para pintar ya, sin esperar a la próxima lectura
+    ws_clients.add(client)
+    sender = asyncio.create_task(client.run())
     try:
-        while True:
+        while not client.dead:
             await websocket.receive_text()
-    except WebSocketDisconnect:
-        ws_clients.discard(websocket)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        client.dead = True
+        client.wake.set()
+        ws_clients.discard(client)
+        await asyncio.gather(sender, return_exceptions=True)
 
 
 async def main() -> None:
     prepare_data()
     lua_server = await asyncio.start_server(handle_lua, config.BRIDGE_HOST, config.LUA_PORT)
-    api = uvicorn.Server(uvicorn.Config(app, host=config.BRIDGE_HOST, port=config.API_PORT, log_level="info"))
+    # timeout_graceful_shutdown: al pulsar Ctrl+C no se espera a que el overlay (WebSocket abierto) cierre solo
+    api = uvicorn.Server(uvicorn.Config(app, host=config.BRIDGE_HOST, port=config.API_PORT, log_level="info",
+                                        timeout_graceful_shutdown=1))
     print(f"Esperando a BizHawk en {config.BRIDGE_HOST}:{config.LUA_PORT}; API en :{config.API_PORT}")
+    token = next(iter(config.API_TOKENS), "")
+    print(f"Overlay para OBS (ábrelo en el navegador para configurarlo): http://localhost:{config.API_PORT}/overlay/?token={token}")
     async with lua_server:
-        await asyncio.gather(lua_server.serve_forever(), api.serve())
+        lua_task = asyncio.create_task(lua_server.serve_forever())
+        await api.serve()          # termina con Ctrl+C
+        lua_task.cancel()
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── config.py              Direcciones de memoria y valores por defecto
 ├── config_local.example.py  Plantilla de configuración personal (copiar como config_local.py)
 ├── requirements.txt
+├── overlay/               Overlay para OBS (página de configuración + vista); lo sirve el puente en /overlay/
 ├── lua/                   Scripts de BizHawk: connector.lua, dump_ram.lua, watch_ram.lua
 ├── tools/                 ram_tool.py (análisis de volcados)
 ├── tests/                 Pruebas (run_all.py las ejecuta todas)
@@ -646,6 +647,8 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 | `DELETE` | `/events/{id}` | Cancela un evento `pendiente` |
 | `POST` | `/rollback` | Carga el savestate de la ranura 9 (estado anterior al último evento) |
 | `GET` | `/happenings?since=N` | Avisos de lo que pasó en el juego con `id` mayor que `N` (los últimos 500; ver abajo) |
+| `GET` | `/overlay/` | Página de configuración del overlay de OBS (sin token; ver sección 7b) |
+| `GET` | `/overlay-token` | Devuelve el token, solo si la petición viene de esta computadora (127.0.0.1); lo usa el overlay |
 | `WS` | `/ws?token=...` | Avisos en vivo del estado (`kind: state`), de los eventos (`kind: event`) y de lo que pasa en el juego (`kind: happening`) |
 
 **Avisos (`happenings.py`):** el puente compara cada lectura con la anterior y sigue a cada Pokémon por su PID (equipo y
@@ -773,6 +776,41 @@ Eventos disponibles:
 Protecciones: no se escribe si el modo es `unknown`, si el checksum del slot no es válido en ese momento,
 o si la memoria cambió entre la lectura y la escritura.
 
+## 7b. Overlay de OBS (`overlay/`)
+
+Pensado para quien no programa: no hay que instalar nada más ni editar archivos.
+
+1. Abrir el puente (`python bridge.py`). Al arrancar muestra la dirección del overlay.
+2. Abrir `http://localhost:8000/overlay/` en el navegador. Si falta el token o no sirve, la página lo pide a
+   `/overlay-token` (solo responde a esta misma computadora) y lo pone en la dirección.
+3. Elegir qué mostrar (atajos: todo junto, solo el equipo, solo avisos, lugar y medallas), cómo (fila, columna o 3×2;
+   mote o especie; tema oscuro, claro o sin fondo; tamaño; segundos de cada aviso) y mirar la vista previa. Con "datos de
+   ejemplo" se configura sin el juego abierto. Las opciones se recuerdan en el navegador.
+4. Copiar la dirección y en OBS: *Fuentes* > *+* > *Navegador* > pegar, con el ancho y alto que sugiere la página.
+
+Archivos:
+- `index.html`: página de configuración; muestra si el puente y el juego están conectados.
+- `view.html` + `view.css`: lo que va en OBS (fondo transparente). Opciones por la URL: `show=place,badges,team,feed`,
+  `layout=row|column|grid`, `names=nickname|species`, `theme=dark|light|clear`, `animated`, `empty`, `size`, `feedtime`,
+  `demo=1`.
+- `common.js`: conexión por WebSocket (se reconecta sola), datos de ejemplo, textos de los avisos en español y sprites.
+
+Notas:
+- Los sprites (Gen 5 animados, variocolor incluido) se cargan de PokeAPI/sprites en GitHub: hace falta internet.
+- En combate el equipo no se vuelve a pintar (se queda el último), porque el puente no relee el equipo en combate.
+- Necesita la librería `websockets` (está en `requirements.txt`); sin ella uvicorn rechaza el WebSocket.
+- El puente corta el WebSocket al cerrarse (`timeout_graceful_shutdown=1`); si no, Ctrl+C se quedaba en "Shutting down".
+- Cada cliente del WebSocket tiene su propia cola y tarea de envío (`WsClient` en `bridge.py`): `broadcast` solo encola y
+  vuelve. Antes se esperaba a cada navegador antes de contestar al Lua, y una pestaña que dejaba de leer (DevTools en pausa,
+  pestaña congelada) trababa BizHawk (`socketServerResponse` espera la respuesta). Del estado solo se manda el último;
+  avisos y eventos van todos y en orden. Un cliente que tarda más de 10 s en recibir o acumula 200 avisos se desconecta (la
+  página se reconecta sola). Prueba: con un cliente que no lee, la versión anterior se trababa en el 8.º POLL; la nueva
+  responde todos.
+- CSS: `[hidden] { display: none !important; }`, porque un `display` propio gana al atributo `hidden` (el aviso "esperando
+  al puente" no se ocultaba).
+- Mejoras visuales pendientes (no urgentes): pulir el diseño de las tarjetas y avisos.
+- La carpeta no depende de Python: se puede mover a otro proyecto cambiando solo de dónde se sirve.
+
 ---
 
 ## 8. Bitácora
@@ -829,6 +867,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 29-oct | Zona actual (`GameData + 0x114`) y tabla de encuentros en `/state` (`location`, `encounters`), firma `encounters`; zonas, nombres y tablas de la ROM en `rom.py`. Validado: la tabla escrita vuelve a la original al salir y entrar de la zona. |
 | 29-oct | Avisos de lo que pasa en el juego (`happenings.py`, `GET /happenings`, `kind: happening` en el WebSocket). Validado en la Ruta 20: inicio y fin del combate, Purrloin del equipo debilitado, Purrloin capturado (`caught`, a la caja 1, lugar Route 20) y los dos cambios de zona. El lugar de encuentro del PK5 (`0x80`) usa la misma lista que los nombres de zona (texto 109). |
 | 29-oct | Cajas 2-24 (`boxes.py`: bloque 0 con nombres, caja abierta y nº de cajas; el Lua manda la abierta y otra por turnos) y `move_pokemon` / `remove_pokemon` (`pc.py`). Validado: equipo → caja 2 (Patrat; el equipo se ve bien con 5), caja 1 → equipo (Eevee nivel 20, 53/53 PS, ficha correcta), liberar de la caja 2; avisos `moved` y `left`. Guardar en el juego y reiniciar: carga sin error, Eevee sigue en el equipo y las cajas vacías. |
+| 29-oct | Overlay de OBS (`overlay/`, servido por el puente en `/overlay/`): página de configuración con atajos y vista previa, vista con lugar, medallas, equipo (sprites, PS, estado) y avisos animados. El token se rellena solo desde esta computadora (`/overlay-token`). Arreglos: faltaba `websockets` (WebSocket rechazado), Ctrl+C no cerraba el puente con el overlay abierto, un overlay que dejaba de leer trababa BizHawk (ahora cada cliente tiene su cola) y el aviso de conexión no se ocultaba. Validado con el juego: cambios de ruta, ciudad y equipo en vivo, sin trabas. |
 
 ---
 

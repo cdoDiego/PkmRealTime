@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="view.css">
+</head>
+<body>
+<div class="stack" id="root"></div>
+<script src="common.js"></script>
+<script>
+"use strict";
+// Opciones por la URL (las arma la página de configuración):
+//   show=place,badges,team,feed  layout=row|column|grid  size=1  theme=dark|light|clear
+//   names=nickname|species  animated=1|0  empty=1|0  feedtime=6  demo=1
+const show = (params.get("show") || "place,badges,team,feed").split(",");
+const layout = params.get("layout") || "row";
+const theme = params.get("theme") || "dark";
+const names = params.get("names") || "nickname";
+const animated = params.get("animated") !== "0";
+const showEmpty = params.get("empty") !== "0";
+const feedTime = Math.max(2, Number(params.get("feedtime") || 6)) * 1000;
+document.documentElement.style.setProperty("--scale", Number(params.get("size") || 1));
+document.body.classList.add("theme-" + theme);
+
+const root = document.getElementById("root");
+const notice = el("div", "notice"); notice.hidden = true;
+root.append(notice);
+let bar, placeEl, badgesEl, teamEl, feedEl;
+if (show.includes("place") || show.includes("badges")) {
+  bar = el("div", "bar");
+  if (show.includes("place")) {
+    placeEl = el("div", "place");
+    placeEl.append(el("span", "pin", "◉"), el("span", "", "…"));
+    bar.append(placeEl);
+  }
+  if (show.includes("badges")) {
+    badgesEl = el("div", "badges");
+    for (let i = 0; i < 8; i++) badgesEl.append(el("div", "badge"));
+    bar.append(badgesEl);
+  }
+  root.append(bar);
+}
+if (show.includes("team")) { teamEl = el("div", "team " + layout); root.append(teamEl); }
+if (show.includes("feed")) { feedEl = el("div", "feed"); root.append(feedEl); }
+
+function hpColor(frac) {
+  return frac > 0.5 ? "var(--hp-good)" : frac > 0.2 ? "var(--hp-mid)" : "var(--hp-low)";
+}
+
+// Una tarjeta por hueco; se reutilizan para no recargar los sprites
+const cards = [];
+function card(i) {
+  if (cards[i]) return cards[i];
+  const c = { root: el("div", "mon"), sprite: el("div", "sprite"), name: el("span", "name"), lvl: el("span", "lvl"),
+              fill: el("div"), hptext: el("span", "hptext"), status: el("span", "status"), key: null };
+  const info = el("div", "info"), row = el("div", "row"), hp = el("div", "hp"), sub = el("div", "sub");
+  row.append(c.name, c.lvl); hp.append(c.fill); sub.append(c.hptext, c.status);
+  info.append(row, hp, sub);
+  c.root.append(c.sprite, info);
+  teamEl.append(c.root);
+  cards[i] = c;
+  return c;
+}
+
+function drawTeam(party) {
+  const mons = (party || []).filter(m => m.valid !== false);
+  const total = showEmpty ? 6 : mons.length;
+  for (let i = 0; i < Math.max(total, cards.length); i++) {
+    const m = mons[i];
+    if (i >= total) { if (cards[i]) cards[i].root.hidden = true; continue; }
+    const c = card(i);
+    c.root.hidden = false;
+    const key = m ? `${m.species}|${m.shiny}|${m.egg}` : "empty";
+    if (key !== c.key) {       // solo se cambia la imagen si cambia el Pokémon
+      c.key = key;
+      c.sprite.replaceChildren();
+      if (!m) c.sprite.append(el("div", "ball"));
+      else if (m.egg) c.sprite.append(el("div", "egg"));
+      else {
+        const img = new Image();
+        img.alt = monName(m, "species");
+        img.src = spriteUrl(m, animated);
+        img.onerror = () => { if (animated && !img.dataset.fallback) { img.dataset.fallback = 1; img.src = spriteUrl(m, false); } };
+        c.sprite.append(img);
+      }
+    }
+    c.root.classList.toggle("empty", !m);
+    c.root.classList.toggle("fainted", !!m && !m.egg && m.hp === 0);
+    if (!m) { c.name.textContent = ""; c.lvl.textContent = ""; c.hptext.textContent = ""; c.fill.style.width = "0";
+              c.status.hidden = true; continue; }
+    c.name.textContent = monName(m, names);
+    if (m.shiny && !m.egg) c.name.append(el("span", "shiny", "★"));
+    c.lvl.textContent = m.egg ? "" : `Nv. ${m.level}`;
+    const frac = m.max_hp ? m.hp / m.max_hp : 0;
+    c.fill.style.width = m.egg ? "0" : `${Math.round(frac * 100)}%`;
+    c.fill.style.background = hpColor(frac);
+    c.hptext.textContent = m.egg ? "" : m.hp === 0 ? "Debilitado" : `${m.hp}/${m.max_hp}`;
+    const st = STATUS[m.status];
+    c.status.hidden = !st || m.hp === 0;
+    if (st) { c.status.textContent = st[0]; c.status.style.background = st[1]; }
+  }
+}
+
+function onState(s) {
+  if (placeEl) placeEl.lastChild.textContent = (s.location && s.location.name) || "—";
+  if (badgesEl) [...badgesEl.children].forEach((b, i) => b.classList.toggle("on", i < (s.badges || 0)));
+  if (teamEl && s.mode !== "battle") drawTeam(s.party);   // en combate el equipo no se relee: se queda el último
+}
+
+function onHappening(h) {
+  if (!feedEl) return;
+  const t = happeningText(h);
+  if (!t) return;
+  const toast = el("div", "toast " + t.tone);
+  toast.append(el("span", "icon", t.icon), el("span", "", t.text));
+  feedEl.prepend(toast);
+  while (feedEl.children.length > 4) feedEl.lastChild.remove();
+  setTimeout(() => { toast.classList.add("leaving"); setTimeout(() => toast.remove(), 500); }, feedTime);
+}
+
+function onStatus(st) {
+  notice.hidden = st === "ok" || st === "demo";
+  notice.textContent = st === "token" ? "Overlay: token incorrecto (revisa la URL)" : "Overlay: esperando al puente…";
+}
+
+connectBridge({ onState, onHappening, onStatus, demo: params.get("demo") === "1" });
+</script>
+</body>
+</html>
