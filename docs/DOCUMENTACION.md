@@ -14,6 +14,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── gift.py                Crear Pokémon nuevos (regalos); exporta .pk5 para PKHeX
 ├── battle.py              Estructura de combate (fase 5): lectura y escrituras
 ├── encounters.py          Zona actual y tabla de encuentros salvajes de la zona
+├── happenings.py          Avisos de lo que pasa en el juego (capturas, debilitados, medallas, zona...)
 ├── rom.py                 Lee datos de la ROM → gen5_data.json
 ├── gamedata.py            Carga gen5_data.json
 ├── move_pp.py             PP máximos (usa los de la ROM; tabla original de respaldo)
@@ -640,7 +641,26 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
 | `DELETE` | `/events/{id}` | Cancela un evento `pendiente` |
 | `POST` | `/rollback` | Carga el savestate de la ranura 9 (estado anterior al último evento) |
-| `WS` | `/ws?token=...` | Avisos en vivo del estado y de los eventos |
+| `GET` | `/happenings?since=N` | Avisos de lo que pasó en el juego con `id` mayor que `N` (los últimos 500; ver abajo) |
+| `WS` | `/ws?token=...` | Avisos en vivo del estado (`kind: state`), de los eventos (`kind: event`) y de lo que pasa en el juego (`kind: happening`) |
+
+**Avisos (`happenings.py`):** el puente compara cada lectura con la anterior y sigue a cada Pokémon por su PID (equipo y
+caja 1). Cada aviso trae `id`, `time`, `type` y sus datos (`pid`, `species`, `name`, `level`, `where`, `slot`...):
+
+| `type` | Cuándo |
+| --- | --- |
+| `caught` | Pokémon nuevo cuyo lugar de encuentro es el de la zona actual (captura); trae `ball`, `met_location`, `met_place` |
+| `obtained` | Pokémon nuevo que no es una captura aquí: regalo (lugar 30000+), huevo, intercambio, o capturado en otra zona |
+| `fainted` / `revived` | Vida de un Pokémon del equipo pasa a 0 / vuelve de 0 (se ve al salir del combate) |
+| `level_up`, `evolved`, `hatched` | Sube de nivel (`from_level`), cambia de especie (`from_species`), el huevo eclosiona |
+| `moved` | Pasa del equipo a la caja 1 o al revés (`from`, `from_slot`) |
+| `left` | Desaparece del equipo y la caja 1: liberado, a otra caja o intercambiado |
+| `badge` | Medalla nueva (`badge` 1-8, `count`) |
+| `zone` | Cambio de zona (`zone`, `zone_name`, `from`, `from_name`) |
+| `battle_start` / `battle_end` | Empieza / acaba un combate |
+
+Al conectar (o reconectar) el Lua no se avisa de lo que ya había. Si un Pokémon está a medio escribir (checksum mal) esa
+lectura no se compara. Cargar un savestate puede dar avisos (lo que cambia respecto a lo anterior).
 
 En combate, cada combatiente de `battle` muestra sus cambios de estadísticas así
 (en el juego solo se ven como mensajes en el momento):
@@ -794,6 +814,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | **Randomizer (UPR ZX) validado:** datos idénticos al log del randomizer y pruebas en el juego (regalo, combates forzados, objeto en combate, huevo). `rom_compare.py` ahora mira las zonas cambiadas dentro de cada overlay (antes avisaba por cualquier cambio en el overlay 36). |
 | 28-oct | Investigación de encuentros por fecha: la tabla de encuentros de la zona está en RAM (`*(GameData + 0x158) + 0x38`, 0xE8 bytes) y se lee en cada encuentro; comprobada con los volcados de la Ruta 19 contra `a/1/2/7` y **validada en el juego** (Ruta 20 solo iniciales: salieron Mudkip, Charmander y Chikorita; dura tras los combates). Ideas futuras documentadas (sección 10). |
 | 29-oct | Zona actual (`GameData + 0x114`) y tabla de encuentros en `/state` (`location`, `encounters`), firma `encounters`; zonas, nombres y tablas de la ROM en `rom.py`. Validado: la tabla escrita vuelve a la original al salir y entrar de la zona. |
+| 29-oct | Avisos de lo que pasa en el juego (`happenings.py`, `GET /happenings`, `kind: happening` en el WebSocket). Validado en la Ruta 20: inicio y fin del combate, Purrloin del equipo debilitado, Purrloin capturado (`caught`, a la caja 1, lugar Route 20) y los dos cambios de zona. El lugar de encuentro del PK5 (`0x80`) usa la misma lista que los nombres de zona (texto 109). |
 
 ---
 

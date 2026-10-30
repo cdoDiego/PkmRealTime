@@ -87,6 +87,45 @@
             },
             "description": "Usa el id guardado al crear el último evento. Espera 1 segundo después de crearlo: debe pasar de pendiente a aplicado."
           }
+        },
+        {
+          "name": "Avisos (happenings)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/happenings?since=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "happenings"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Lo que pasó en el juego desde el aviso 'since': caught, obtained, fainted, revived, level_up, evolved, hatched, moved, left, badge, zone, battle_start, battle_end."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('lista', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

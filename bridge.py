@@ -16,6 +16,7 @@ Protocolo con Lua (texto, una petición por mensaje):
 BizHawk 2.6.2+ antepone "<longitud> " a todo mensaje, en ambos sentidos: aquí se quita al recibir y se añade al responder.
 """
 import asyncio
+import collections
 import itertools
 import json
 import os
@@ -36,6 +37,7 @@ import encounters
 import field_script
 import gamedata
 import gift
+import happenings
 import pk5
 
 # ---------------------------------------------------------------- modelos
@@ -123,6 +125,9 @@ trainer_raw: bytes = b""
 misc_raw: bytes = b""          # dinero y medallas
 enc_raw: bytes = b""           # tabla de encuentros de la zona, tal como está en la RAM
 enc_addr: int = 0
+last_snap = None               # última lectura para los avisos (happenings.py)
+happening_log: collections.deque = collections.deque(maxlen=500)
+_happening_ids = itertools.count(1)
 in_flight: Optional[int] = None
 ws_clients: set[WebSocket] = set()
 
@@ -468,6 +473,29 @@ def update_location(field: str) -> None:
     enc_raw, enc_addr = raw, addr
 
 
+def record_happenings(mode: str) -> list:
+    """Compara con la lectura anterior y guarda los avisos nuevos (GET /happenings, y por el WebSocket)."""
+    global last_snap
+    badges = misc_raw[4] if len(misc_raw) == config.MISC_SIZE else None
+    snap = happenings.snapshot(mode, game["location"], badges, party_raw, box_raw, config.BOX_SLOT_SIZE)
+    if snap["mons"] is None and last_snap is not None:   # en combate o a medio escribir: se conserva la última buena
+        snap["mons"] = last_snap["mons"]
+    found = happenings.diff(last_snap, snap)
+    last_snap = snap
+    out = []
+    for kind, data in found:
+        for key in ("zone", "from"):     # nombres de lugar para leerlo sin buscar
+            if kind == "zone":
+                data[key + "_name"] = encounters.place_name(data[key])
+        if "met_location" in data:
+            places = gamedata.DATA.get("places", [])
+            data["met_place"] = places[data["met_location"]] if data["met_location"] < len(places) else ""
+        h = {"id": next(_happening_ids), "time": time.time(), "type": kind, **data}
+        happening_log.append(h)
+        out.append(h)
+    return out
+
+
 def money_commands(d: dict) -> str:
     if len(misc_raw) != config.MISC_SIZE:
         raise ValueError("todavía no se ha leído el dinero")
@@ -509,7 +537,7 @@ def update_bag(hexdata: str) -> None:
 
 
 async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    global in_flight
+    global in_flight, last_snap
     game["connected"] = True
     print("Lua conectado")
     try:
@@ -537,6 +565,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     update_box(hexbox, hextrainer)
                     update_misc(hexmisc)
                     update_location(locfield)
+                for h in record_happenings(mode):
+                    await broadcast({"kind": "happening", "happening": h})
                 # BizHawk 2.6.2+ solo lee respuestas "<longitud> <mensaje>"; sin eso se bloquea esperando
                 payload = next_commands().encode()
                 writer.write(str(len(payload)).encode() + b" " + payload)
@@ -548,6 +578,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                 ev.state, ev.detail, in_flight = ("aplicado" if ok == "ok" else "fallo"), detail, None
                 await broadcast({"kind": "event", "event": asdict(ev)})
     finally:
+        last_snap = None   # al reconectar se empieza de cero (sin avisos de todo lo que ya había)
         game["connected"] = False
         in_flight = None
         print("Lua desconectado")
@@ -561,6 +592,13 @@ def auth(token: Optional[str]) -> str:
     if token not in config.API_TOKENS:
         raise HTTPException(401, "token inválido")
     return config.API_TOKENS[token]
+
+
+@app.get("/happenings")
+async def list_happenings(since: int = 0, x_token: Optional[str] = Header(None)):
+    """Avisos con id > since (los últimos 500)."""
+    auth(x_token)
+    return [h for h in happening_log if h["id"] > since]
 
 
 @app.post("/events")
