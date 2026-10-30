@@ -18,7 +18,7 @@ def mon(species, level, hp=20, met=124, party=True, egg=False):
 
 def enc(plain): return bytes(pk5.encrypt(plain))
 def snap(mode, zone, badges, party, box=b""):
-    return happenings.snapshot(mode, {"zone": zone}, badges, [enc(p) for p in party], box, 136)
+    return happenings.snapshot(mode, {"zone": zone}, badges, [enc(p) for p in party], {0: box} if box else {})
 
 starter = mon(501, 5)
 s0 = snap("map", 437, 0b1, [starter])
@@ -59,6 +59,10 @@ assert [k for k, _ in happenings.diff(s4, s5)] == ["hatched"]
 
 # datos a medio escribir: no se compara (sin avisos falsos)
 bad = bytearray(enc(evo)); bad[0x20] ^= 0xFF
-s6 = happenings.snapshot("map", {"zone": 446}, 0b11, [bytes(bad)], b"", 136)
+s6 = happenings.snapshot("map", {"zone": 446}, 0b11, [bytes(bad)], {})
 assert s6["mons"] is None and happenings.diff(s5, s6) == []
+# de la caja 1 a la caja 3: "moved" con la caja
+s7 = happenings.snapshot("map", {"zone": 446}, 0b11, [enc(evo), enc(hatched)], {0: bytes(136 * 30), 2: enc(caught[:136]) + bytes(136 * 29)})
+got = happenings.diff(s5, s7)
+assert [k for k, _ in got] == ["moved"] and got[0][1]["where"] == "box3" and got[0][1]["from"] == "box1", got
 print("ok avisos")

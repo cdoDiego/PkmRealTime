@@ -30,6 +30,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from pydantic import BaseModel, ConfigDict
 
 import bag
+import boxes
 import battle
 import battle_cmd
 import config
@@ -38,6 +39,7 @@ import field_script
 import gamedata
 import gift
 import happenings
+import pc
 import pk5
 
 # ---------------------------------------------------------------- modelos
@@ -53,12 +55,12 @@ class EventIn(BaseModel):
     model_config = ConfigDict(extra="forbid")   # un campo mal escrito o mal colocado da error en vez de ignorarse
 
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
-                  "give_pokemon", "give_egg", "battle_set_hp", "battle_set_status",
+                  "give_pokemon", "give_egg", "move_pokemon", "remove_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
-    target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo
+    target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo; {"box": 2, "slot": 0} = caja
     hp: Optional[int] = None
     status: Optional[str] = None
     turns: Optional[int] = None      # sleep: turnos sin atacar (1-6, por defecto 3); battle_set_weather: turnos (sin turns = sin fin)
@@ -86,7 +88,8 @@ class EventIn(BaseModel):
     trainer: Optional[int] = None    # start_trainer_battle: nº de entrenador (de la ROM)
     trainer2: Optional[int] = None   # start_trainer_battle: segundo entrenador (combate doble contra los dos)
     weather: Optional[str] = None    # set_weather: rain, snow, sandstorm... o número; battle_set_weather: none, sun, rain, sandstorm, hail
-    destination: Optional[str] = None  # give_pokemon: "box1" (por defecto, todas las opciones) o "party" (orden del juego)
+    destination: Optional[str] = None  # give_pokemon: "box1" (por defecto) o "party"; move_pokemon: "party" o "box1"-"box24"
+    to_slot: Optional[int] = None      # move_pokemon a una caja: hueco 0-29 (por defecto, el primero libre)
     form: Optional[int] = None       # give_pokemon al equipo / start_wild_battle: forma
     no_flee: bool = False            # start_wild_battle: no se puede huir
     ball: Optional[int] = None       # give_pokemon al equipo: ball (4 = Poké Ball)
@@ -115,12 +118,15 @@ pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos 
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "money": None, "badges": None, "compat": {},
-        "location": None, "encounters": None,
+        "location": None, "encounters": None, "boxes": [], "box_current": None,
         "connected": False, "updated": 0.0}
 NEEDS_DATA = {"heal", "set_move", "give_pokemon"}   # usan datos de la ROM (PP, especies, movimientos)
 party_raw: list[bytes] = []
 bag_raw: bytes = b""
-box_raw: bytes = b""
+box_raw: bytes = b""          # caja 1 (regalos)
+box_main: bytes = b""         # bloque 0 de las cajas: nombres, caja abierta, cuántas hay
+box_cache: dict = {}          # nº de caja (desde 0) -> sus datos, tal como llegaron por última vez
+missing_polls: dict = {}      # PID -> lecturas seguidas sin verlo (para no avisar "left" antes de releer todas las cajas)
 trainer_raw: bytes = b""
 misc_raw: bytes = b""          # dinero y medallas
 enc_raw: bytes = b""           # tabla de encuentros de la zona, tal como está en la RAM
@@ -137,9 +143,11 @@ ws_clients: set[WebSocket] = set()
 def build_commands(ev: Event) -> str:
     """Convierte un evento en comandos para Lua. Lanza ValueError si no aplica."""
     d = ev.data
-    unknown = set(d["target"]) - {"side", "slot"}
+    unknown = set(d["target"]) - {"side", "slot", "box"}
     if unknown:
-        raise ValueError(f"target solo admite side y slot, no {sorted(unknown)}")
+        raise ValueError(f"target solo admite side, slot y box, no {sorted(unknown)}")
+    if "box" in d["target"] and d["type"] not in ("move_pokemon", "remove_pokemon"):
+        raise ValueError("target.box solo vale para move_pokemon y remove_pokemon")
     if d["type"] == "rollback":
         return "LOAD"
     if d["type"] in ("debug_peek", "debug_poke", "debug_inject"):   # herramientas de investigación
@@ -240,6 +248,8 @@ def build_commands(ev: Event) -> str:
                                                      int(d.get("ball") or 4), d["shiny"])
     if d["type"] == "give_pokemon":
         return gift_commands(d)
+    if d["type"] in ("move_pokemon", "remove_pokemon"):
+        return pc_commands(d)
     if d["type"] == "heal" and "slot" not in d["target"]:
         slots = list(range(len(party_raw)))
     else:
@@ -433,21 +443,16 @@ def prepare_data() -> None:
 
 
 def update_box(hexbox: str, hextrainer: str) -> None:
-    global box_raw, trainer_raw
-    size = config.BOX_SLOT_SIZE
-    raw = bytes.fromhex(hexbox) if hexbox not in ("", "-") else b""
-    if len(raw) == config.BOX_SLOTS * size:
-        box_raw = raw
-        box = []
-        for i in range(config.BOX_SLOTS):
-            chunk = raw[i * size:(i + 1) * size]
-            if not gift.is_empty_slot(chunk):
-                try:
-                    info = gift.summary(pk5.decrypt(chunk))
-                    box.append({"slot": i, **{k: info[k] for k in ("species", "name", "level", "valid")}})
-                except (ValueError, IndexError, KeyError, StopIteration):   # datos raros: se marcan, no se tumba el puente
-                    box.append({"slot": i, "valid": False})
-        game["box1"] = box
+    global box_raw, box_main, trainer_raw
+    main, found = boxes.parse_field(hexbox)
+    if main:
+        box_main = main
+        box_cache.update(found)
+        box_raw = box_cache.get(0, box_raw)
+        game["box1"] = boxes.summary(box_raw) if box_raw else []
+        game["box_current"] = boxes.current(main) + 1
+        game["boxes"] = [{"box": n + 1, "name": boxes.name(main, n), "pokemon": boxes.summary(box_cache[n])}
+                         for n in range(boxes.count(main)) if n in box_cache]
     t = bytes.fromhex(hextrainer) if hextrainer not in ("", "-") else b""
     if len(t) == config.TRAINER_SIZE:
         trainer_raw = t
@@ -477,9 +482,20 @@ def record_happenings(mode: str) -> list:
     """Compara con la lectura anterior y guarda los avisos nuevos (GET /happenings, y por el WebSocket)."""
     global last_snap
     badges = misc_raw[4] if len(misc_raw) == config.MISC_SIZE else None
-    snap = happenings.snapshot(mode, game["location"], badges, party_raw, box_raw, config.BOX_SLOT_SIZE)
+    snap = happenings.snapshot(mode, game["location"], badges, party_raw, box_cache)
     if snap["mons"] is None and last_snap is not None:   # en combate o a medio escribir: se conserva la última buena
         snap["mons"] = last_snap["mons"]
+    elif last_snap is not None and last_snap["mons"] is not None:
+        # un Pokémon que pasa a una caja que aún no se ha releído falta un momento: se espera una vuelta de cajas
+        wait = (boxes.count(box_main) if box_main else 1) + 2
+        for pid, m in last_snap["mons"].items():
+            if pid in snap["mons"]:
+                missing_polls.pop(pid, None)
+            elif missing_polls.get(pid, 0) < wait:
+                missing_polls[pid] = missing_polls.get(pid, 0) + 1
+                snap["mons"][pid] = m
+            else:
+                missing_polls.pop(pid, None)
     found = happenings.diff(last_snap, snap)
     last_snap = snap
     out = []
@@ -494,6 +510,82 @@ def record_happenings(mode: str) -> list:
         happening_log.append(h)
         out.append(h)
     return out
+
+
+def pc_commands(d: dict) -> str:
+    """Mover un Pokémon entre el equipo y las cajas, o quitarlo (liberar). Todo con guardas: si algo cambió, no se escribe."""
+    t = d["target"]
+    if "slot" not in t:
+        raise ValueError("falta target.slot (y target.box si está en una caja)")
+    slot = int(t["slot"])
+    ptr = game["party_addr"] - config.PARTY_PTR_OFF
+    count = boxes.count(box_main) if box_main else 1
+
+    def box_index(n) -> int:
+        n = int(n) - 1
+        if not 0 <= n < count:
+            raise ValueError(f"caja {n + 1} no válida (hay {count})")
+        if n not in box_cache:
+            raise ValueError(f"la caja {n + 1} aún no se ha leído; reintenta en un momento")
+        return n
+
+    def box_slot_addr(n, s):
+        return ptr + config.BOX_PTR_OFF + n * boxes.STRIDE + s * pc.BOX_SLOT
+
+    party_addr = ptr + config.PARTY_COUNT_PTR_OFF
+    old_party = struct.pack("<I", len(party_raw)) + b"".join(party_raw)
+    cmds = ["SAVE"]
+    if "box" in t:                                   # origen: una caja
+        src_box = box_index(t["box"])
+        if not 0 <= slot < boxes.SLOTS:
+            raise ValueError("target.slot de una caja va de 0 a 29")
+        raw = box_cache[src_box][slot * pc.BOX_SLOT:(slot + 1) * pc.BOX_SLOT]
+        if pc.is_empty(raw):
+            raise ValueError(f"no hay Pokémon en la caja {src_box + 1}, hueco {slot}")
+        if not pk5.is_valid(pk5.decrypt(raw)):
+            raise ValueError("datos del Pokémon no válidos ahora mismo (checksum); reintenta")
+        clear_src = f"G {box_slot_addr(src_box, slot):#x} {raw.hex()} {pc.EMPTY_BOX.hex()}"
+        new_party = None
+    else:                                            # origen: el equipo
+        src_box = None
+        if not 0 <= slot < len(party_raw):
+            raise ValueError(f"no hay Pokémon en el slot {slot} del equipo")
+        raw = party_raw[slot]
+        if not pk5.is_valid(pk5.decrypt(raw)):
+            raise ValueError(f"datos del slot {slot} no válidos ahora mismo (checksum); reintenta en el mapa")
+        rest = party_raw[:slot] + party_raw[slot + 1:]
+        if not any(pc.able(r) for r in rest):
+            raise ValueError("el equipo debe quedarse con al menos un Pokémon que pueda luchar")
+        new_party = struct.pack("<I", len(rest)) + b"".join(rest) + pc.EMPTY_PARTY
+        clear_src = f"G {party_addr:#x} {old_party.hex()} {new_party.hex()}"
+    if d["type"] == "remove_pokemon":
+        return ";".join(cmds + [clear_src])
+    dest = str(d.get("destination") or "")
+    if dest == "party":
+        if src_box is None:
+            raise ValueError("ya está en el equipo")
+        if len(party_raw) >= pc.PARTY_MAX:
+            raise ValueError("el equipo está lleno (6)")
+        mon = pc.to_party(raw, d.get("hp"))
+        grown = struct.pack("<I", len(party_raw) + 1) + b"".join(party_raw)
+        return ";".join(cmds + [clear_src, f"G {party_addr:#x} {old_party.hex()} {grown.hex()}",
+                                f"W {game['party_addr'] + len(party_raw) * pc.PARTY_SLOT:#x} {mon.hex()}"])
+    if not dest.startswith("box") or not dest[3:].isdigit():
+        raise ValueError('destination debe ser "party" o "box1"-"box24"')
+    dst_box = box_index(dest[3:])
+    box = bytearray(box_cache[dst_box])
+    if src_box == dst_box:                           # dentro de la misma caja, el hueco de origen queda libre
+        box[slot * pc.BOX_SLOT:(slot + 1) * pc.BOX_SLOT] = pc.EMPTY_BOX
+    to = d.get("to_slot")
+    to = pc.first_free(bytes(box)) if to is None else int(to)
+    if to is None:
+        raise ValueError(f"la caja {dst_box + 1} está llena")
+    if src_box == dst_box and to == slot:
+        raise ValueError("ya está en ese hueco")
+    if not 0 <= to < boxes.SLOTS or not pc.is_empty(bytes(box[to * pc.BOX_SLOT:(to + 1) * pc.BOX_SLOT])):
+        raise ValueError(f"el hueco {to} de la caja {dst_box + 1} no está libre")
+    put = f"G {box_slot_addr(dst_box, to):#x} {pc.EMPTY_BOX.hex()} {raw[:pc.BOX_SLOT].hex()}"
+    return ";".join(cmds + [clear_src, put])
 
 
 def money_commands(d: dict) -> str:
@@ -578,6 +670,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                 ev.state, ev.detail, in_flight = ("aplicado" if ok == "ok" else "fallo"), detail, None
                 await broadcast({"kind": "event", "event": asdict(ev)})
     finally:
+        box_cache.clear()
+        missing_polls.clear()
         last_snap = None   # al reconectar se empieza de cero (sin avisos de todo lo que ya había)
         game["connected"] = False
         in_flight = None

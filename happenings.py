@@ -1,7 +1,7 @@
 """Avisos de lo que pasa en el juego (capturas, debilitados, medallas, cambios de zona...), comparando cada lectura con
 la anterior. Los Pokémon se siguen por su PID, así se reconocen aunque cambien de hueco o pasen del equipo a la caja.
 
-Solo se ven el equipo y la caja 1: un Pokémon que va a otra caja sale como "left".
+Se ven el equipo y todas las cajas (las que el puente ya ha leído).
 """
 import struct
 
@@ -9,6 +9,7 @@ import gamedata
 import gift
 import pk5
 
+BOX_SLOT = 136
 GIFT_PLACES = 30000   # lugares de encuentro 30000+ (p. ej. 30008 "Tierra lejana"): regalos y eventos, no una zona
 
 
@@ -25,7 +26,7 @@ def _mon(plain: bytes, where: str, slot: int, party: bool) -> dict:
     return m
 
 
-def snapshot(mode: str, location, badges_byte, party_raw: list, box_raw: bytes, box_slot_size: int) -> dict:
+def snapshot(mode: str, location, badges_byte, party_raw: list, box_data: dict) -> dict:
     """Lo que se compara entre lecturas. mons = None si algún Pokémon no se pudo leer (a medio escribir)."""
     snap = {"mode": mode, "zone": location["zone"] if location else None, "badges": badges_byte, "mons": None}
     if mode == "battle":            # en combate el equipo no se lee: se compara al salir
@@ -37,14 +38,16 @@ def snapshot(mode: str, location, badges_byte, party_raw: list, box_raw: bytes, 
             if not pk5.is_valid(plain):
                 return snap
             mons[struct.unpack_from("<I", plain, 0)[0]] = _mon(plain, "party", i, True)
-        for i in range(len(box_raw) // box_slot_size):
-            chunk = box_raw[i * box_slot_size:(i + 1) * box_slot_size]
-            if gift.is_empty_slot(chunk):
-                continue
-            plain = pk5.decrypt(chunk)
-            if not pk5.is_valid(plain):
-                return snap
-            mons.setdefault(struct.unpack_from("<I", plain, 0)[0], _mon(plain, "box1", i, False))
+        for n in sorted(box_data):          # {nº de caja desde 0: 30 Pokémon de 136 bytes}
+            raw = box_data[n]
+            for i in range(len(raw) // BOX_SLOT):
+                chunk = raw[i * BOX_SLOT:(i + 1) * BOX_SLOT]
+                if gift.is_empty_slot(chunk):
+                    continue
+                plain = pk5.decrypt(chunk)
+                if not pk5.is_valid(plain):
+                    return snap
+                mons.setdefault(struct.unpack_from("<I", plain, 0)[0], _mon(plain, f"box{n + 1}", i, False))
     except (ValueError, IndexError, KeyError, struct.error):
         return snap
     snap["mons"] = mons
@@ -97,7 +100,7 @@ def diff(prev, cur) -> list:
                 out.append(("fainted", _short(m)))
             elif old["hp"] == 0 and m["hp"] > 0:
                 out.append(("revived", _short(m)))
-        if old["where"] != m["where"]:
+        if old["where"] != m["where"] or (old["slot"] != m["slot"] and m["where"] != "party"):
             out.append(("moved", {**_short(m), "from": old["where"], "from_slot": old["slot"]}))
     for pid, old in a.items():
         if pid not in b:

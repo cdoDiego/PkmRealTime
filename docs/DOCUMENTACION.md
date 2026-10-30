@@ -15,6 +15,8 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── battle.py              Estructura de combate (fase 5): lectura y escrituras
 ├── encounters.py          Zona actual y tabla de encuentros salvajes de la zona
 ├── happenings.py          Avisos de lo que pasa en el juego (capturas, debilitados, medallas, zona...)
+├── boxes.py               Cajas del PC: nombres, caja abierta, Pokémon de cada caja
+├── pc.py                  Mover y quitar Pokémon entre equipo y cajas
 ├── rom.py                 Lee datos de la ROM → gen5_data.json
 ├── gamedata.py            Carga gen5_data.json
 ├── move_pp.py             PP máximos (usa los de la ROM; tabla original de respaldo)
@@ -77,7 +79,9 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Equipo, slot n | slot 0 + n × `0xDC` | 220 bytes | `0xDC` = 220 | — | ✅ (slot 0 y 1) |
 | Caja 1, slot 1 | puntero + `0xD20` | 136 bytes | Pokémon de caja cifrado. En la prueba: `0x02205A24` | `ram_tool.py boxes` | ✅ leído 25-oct |
 | Caja 1, slot n | caja 1 + n × `0x88` | 136 bytes | `0x88` = 136. Hueco vacío = Pokémon cifrado con PID 0 y especie 0 (no ceros) | Volcados | ✅ escrito 27-oct (regalos) |
-| Caja b | caja 1 + b × `0x1000` | `0x1000` | 30 huecos (`0xFF0`) + pie de 16 bytes con CRC16 de la caja | Volcados + PKHeX | 🟡 visto en volcados |
+| Caja b | caja 1 + b × `0x1000` | `0x1000` | 30 huecos (`0xFF0`) + pie de 16 bytes con CRC16 de la caja | Volcados + PKHeX | ✅ leído y escrito 29-oct (cajas 2 y 3) |
+| Bloque 0 de las cajas | puntero + `0x920` | `0x3E0` | Nombres (`+0x04`, 24 × `0x28`, UTF-16 hasta `0xFFFF`), fondos (`+0x3C4`, 24 × u8), caja abierta u8 (`+0x3DC`), nº de cajas desbloqueadas u8 (`+0x3DD`: 8, 16 o 24) | pokebw2 `box.h` + RAM | ✅ leído 29-oct |
+| Equipo: contador | puntero + `0x19724` | u32 | Nº de Pokémon; los huecos libres son un Pokémon "cero" cifrado (220 bytes) | RAM | ✅ escrito 29-oct (mover/quitar) |
 | Datos del jugador | puntero + `0x19D20` | `0x24` bytes | Nombre (`+0x04`), TID (`+0x14`), SID (`+0x16`), idioma (`+0x1E`), juego (`+0x1F`), género (`+0x21`) | Volcados + PKHeX (`MyStatus5`) | ✅ usado en regalos 27-oct |
 | Mochila | puntero + `0x18D20` | `0x998` bytes | 5 bolsillos sin cifrar (ver abajo). En la prueba: `0x0221DA24` | Volcados + PKHeX (`PlayerBag5B2W2`) | ✅ leída y escrita 27-oct |
 | Estado de combate | `0x021B5178` | u16 | `0x2100` o `0x2101` = en combate | Tracker (`battleStatus`, W2) | ✅ validado 25-oct |
@@ -454,7 +458,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 
 | Dirección | Mensaje |
 | --- | --- |
-| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc> <compat> <zona:estación:dir. encuentros:hex encuentros>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6; la zona va como `-` en combate y la tabla de encuentros como `-` si no hay) |
+| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <cajas> <hex jugador> <código:crc> <combate> <hex misc> <compat> <zona:estación:dir. encuentros:hex encuentros>` (`cajas` = `<hex bloque 0>|<caja abierta>:<hex>|<otra caja>:<hex>`: la abierta en cada lectura y las demás por turnos, así todas se releen en ~1,3 s; equipo, mochila, cajas, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6; la zona va como `-` en combate y la tabla de encuentros como `-` si no hay) |
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
@@ -558,7 +562,7 @@ Lo que cuelga del puntero (equipo, mochila, cajas, jugador) es igual en B2 y W2.
 - [ ] Añadir Black 2 (`IREO`) y, si hace falta, otros idiomas a `GAMES`.
 - [x] Configuración personal (tokens, puertos, ruta de la ROM) en `config_local.py`, que no se sube (plantilla: `config_local.example.py`).
 - [ ] Guía de instalación paso a paso (Python, `pip install -r requirements.txt`, BizHawk, primer arranque).
-- [ ] Regalos en otras cajas, no solo en la caja 1.
+- [ ] Regalos en otras cajas, no solo en la caja 1 (ya se leen todas y `move_pokemon` puede moverlos).
 
 ### Romhacks y randomizers (pendiente, retomar)
 
@@ -635,7 +639,7 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
-| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`), combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) `compat` (qué funciones tienen el código esperado; sección 6), `location` (zona, nombre del lugar y estación) y `encounters` (tabla de encuentros de la zona en RAM: tasa y huecos de cada tipo; `null` en zonas sin encuentros) |
+| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`), todas las cajas leídas (`boxes`: número, nombre y Pokémon) y la abierta (`box_current`), combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) `compat` (qué funciones tienen el código esperado; sección 6), `location` (zona, nombre del lugar y estación) y `encounters` (tabla de encuentros de la zona en RAM: tasa y huecos de cada tipo; `null` en zonas sin encuentros) |
 | `POST` | `/events` | Encola un evento. Devuelve su `id` |
 | `GET` | `/events` | Lista todos los eventos |
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
@@ -645,7 +649,7 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 | `WS` | `/ws?token=...` | Avisos en vivo del estado (`kind: state`), de los eventos (`kind: event`) y de lo que pasa en el juego (`kind: happening`) |
 
 **Avisos (`happenings.py`):** el puente compara cada lectura con la anterior y sigue a cada Pokémon por su PID (equipo y
-caja 1). Cada aviso trae `id`, `time`, `type` y sus datos (`pid`, `species`, `name`, `level`, `where`, `slot`...):
+todas las cajas). Cada aviso trae `id`, `time`, `type` y sus datos (`pid`, `species`, `name`, `level`, `where`, `slot`...):
 
 | `type` | Cuándo |
 | --- | --- |
@@ -653,8 +657,8 @@ caja 1). Cada aviso trae `id`, `time`, `type` y sus datos (`pid`, `species`, `na
 | `obtained` | Pokémon nuevo que no es una captura aquí: regalo (lugar 30000+), huevo, intercambio, o capturado en otra zona |
 | `fainted` / `revived` | Vida de un Pokémon del equipo pasa a 0 / vuelve de 0 (se ve al salir del combate) |
 | `level_up`, `evolved`, `hatched` | Sube de nivel (`from_level`), cambia de especie (`from_species`), el huevo eclosiona |
-| `moved` | Pasa del equipo a la caja 1 o al revés (`from`, `from_slot`) |
-| `left` | Desaparece del equipo y la caja 1: liberado, a otra caja o intercambiado |
+| `moved` | Cambia de sitio: equipo ↔ caja, de una caja a otra o de hueco en una caja (`where` = `party` o `box1`-`box24`; `from`, `from_slot`) |
+| `left` | Desaparece del equipo y de todas las cajas: liberado o intercambiado (se espera una vuelta de cajas antes de avisar, por si solo cambió de caja) |
 | `badge` | Medalla nueva (`badge` 1-8, `count`) |
 | `zone` | Cambio de zona (`zone`, `zone_name`, `from`, `from_name`) |
 | `battle_start` / `battle_end` | Empieza / acaba un combate |
@@ -680,6 +684,10 @@ Eventos disponibles:
 {"type": "give_item",  "item": 17, "qty": 5}                // a la mochila
 {"type": "take_item",  "item": 4,  "qty": 2}                // sin qty = todas
 {"type": "give_pokemon", "species": 1, "level": 5}          // a la caja 1
+{"type": "move_pokemon", "target": {"slot": 1}, "destination": "box2"}              // del equipo a la caja 2
+{"type": "move_pokemon", "target": {"box": 1, "slot": 0}, "destination": "party"}   // de la caja 1 al equipo
+{"type": "move_pokemon", "target": {"box": 1, "slot": 0}, "destination": "box3", "to_slot": 5}
+{"type": "remove_pokemon", "target": {"box": 2, "slot": 0}}                          // liberar (también del equipo)
 {"type": "battle_set_hp", "target": {"side": "enemy", "slot": 0}, "hp": 1}   // en combate (experimental)
 {"type": "battle_set_status", "target": {"side": "enemy", "slot": 0}, "status": "burn"}
 {"type": "battle_set_stage", "target": {"side": "player", "slot": 0}, "stat": "atk", "delta": 2}   // o "stage": valor final
@@ -695,6 +703,11 @@ Eventos disponibles:
 - `give_item` / `take_item`: el puente elige el bolsillo según el objeto. Respeta los máximos (999, o 1 en MT).
   Los objetos clave y los no distribuidos en B2/W2 se rechazan. Al quitar, los de detrás suben un puesto.
 - `give_pokemon`: crea un Pokémon nuevo en el primer hueco libre de la caja 1 (si está llena, falla).
+- `move_pokemon` / `remove_pokemon` (`pc.py`): escriben en la copia del save en RAM con guardas (si algo cambió, no se escribe
+  nada), solo en el mapa con los menús cerrados. Del equipo a una caja se copian los 136 primeros bytes cifrados (ya son un
+  Pokémon de caja válido); de una caja al equipo se calculan nivel, estadísticas y vida como el juego (comprobado con los 6 del
+  equipo; `hp` opcional, p. ej. 0 = debilitado). El equipo se compacta y nunca se queda sin un Pokémon que pueda luchar.
+  Destino `box1`-`box24` en el primer hueco libre o en `to_slot`.
   Por defecto: nivel 5, los últimos 4 movimientos que aprende hasta su nivel, IVs/naturaleza/género aleatorios, sin variocolor.
   El entrenador es el jugador (leído de su bloque de datos), así que le obedece.
   Datos de especies, experiencia y movimientos en `gen5_data.json`, generado desde la ROM (sección 6).
@@ -815,6 +828,7 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Investigación de encuentros por fecha: la tabla de encuentros de la zona está en RAM (`*(GameData + 0x158) + 0x38`, 0xE8 bytes) y se lee en cada encuentro; comprobada con los volcados de la Ruta 19 contra `a/1/2/7` y **validada en el juego** (Ruta 20 solo iniciales: salieron Mudkip, Charmander y Chikorita; dura tras los combates). Ideas futuras documentadas (sección 10). |
 | 29-oct | Zona actual (`GameData + 0x114`) y tabla de encuentros en `/state` (`location`, `encounters`), firma `encounters`; zonas, nombres y tablas de la ROM en `rom.py`. Validado: la tabla escrita vuelve a la original al salir y entrar de la zona. |
 | 29-oct | Avisos de lo que pasa en el juego (`happenings.py`, `GET /happenings`, `kind: happening` en el WebSocket). Validado en la Ruta 20: inicio y fin del combate, Purrloin del equipo debilitado, Purrloin capturado (`caught`, a la caja 1, lugar Route 20) y los dos cambios de zona. El lugar de encuentro del PK5 (`0x80`) usa la misma lista que los nombres de zona (texto 109). |
+| 29-oct | Cajas 2-24 (`boxes.py`: bloque 0 con nombres, caja abierta y nº de cajas; el Lua manda la abierta y otra por turnos) y `move_pokemon` / `remove_pokemon` (`pc.py`). Validado: equipo → caja 2 (Patrat; el equipo se ve bien con 5), caja 1 → equipo (Eevee nivel 20, 53/53 PS, ficha correcta), liberar de la caja 2; avisos `moved` y `left`. Guardar en el juego y reiniciar: carga sin error, Eevee sigue en el equipo y las cajas vacías. |
 
 ---
 

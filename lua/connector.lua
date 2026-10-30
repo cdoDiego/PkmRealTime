@@ -16,6 +16,10 @@ local BAG_PTR_OFF = 0x18D20           -- mochila (sin cifrar)
 local BAG_SIZE = 0x998
 local BOX1_PTR_OFF = 0xD20            -- caja 1 (30 huecos de 136 bytes)
 local BOX1_SIZE = 0xFF0
+local BOX_STRIDE = 0x1000             -- caja n = caja 1 + n * 0x1000 (bloques 1-24 del save)
+local BOXMAIN_PTR_OFF = 0x920         -- bloque 0 de las cajas: nombres (+0x04, 0x28 cada uno), fondos (+0x3C4),
+local BOXMAIN_SIZE = 0x3E0            --   caja abierta u8 (+0x3DC), nº de cajas desbloqueadas u8 (+0x3DD)
+local box_turn = 0                    -- caja que toca enviar además de la abierta
 local TRAINER_PTR_OFF = 0x19D20       -- datos del jugador
 local TRAINER_SIZE = 0x24
 local MISC_PTR_OFF = 0x21A20          -- dinero (u32) y medallas (u8 en +4): bloque Misc del save (0x21100)
@@ -303,6 +307,21 @@ local EV_SIZE, EV_POOL_MAX = 0x3C, 0x84
 local function r32(a) return memory.read_u32_le(off(a), DOMAIN) end
 local function w32(a, v) memory.write_u32_le(off(a), v, DOMAIN) end
 
+-- "<hex bloque 0>|<caja abierta>:<hex>|<otra caja>:<hex>": la abierta en cada lectura y las demás por turnos
+local function boxes_field(ptr)
+  local main = ptr + BOXMAIN_PTR_OFF
+  local cur = memory.read_u8(off(main + 0x3DC), DOMAIN)
+  local count = memory.read_u8(off(main + 0x3DD), DOMAIN)
+  if count < 1 or count > 24 then count = 24 end
+  if cur >= count then cur = 0 end
+  box_turn = (box_turn + 1) % count
+  local parts = { read_hex(main, BOXMAIN_SIZE) }
+  for _, b in ipairs(cur == box_turn and { cur } or { cur, box_turn }) do
+    parts[#parts + 1] = b .. ":" .. read_hex(ptr + BOX1_PTR_OFF + b * BOX_STRIDE, BOX1_SIZE)
+  end
+  return table.concat(parts, "|")
+end
+
 -- "<zona>:<estación>:<dir. tabla de encuentros>:<hex tabla>" (sin tabla: "-" en las dos últimas)
 local function location_field(ptr, game)
   local gd = ptr + GAMEDATA_PTR_OFF
@@ -513,7 +532,7 @@ while true do
       local ptr = addr - PARTY_PTR_OFF
       party = read_hex(addr, n * PARTY_SLOT_SIZE)
       bag = read_hex(ptr + BAG_PTR_OFF, BAG_SIZE)
-      box = read_hex(ptr + BOX1_PTR_OFF, BOX1_SIZE)
+      box = boxes_field(ptr)
       trainer = read_hex(ptr + TRAINER_PTR_OFF, TRAINER_SIZE)
       misc = read_hex(ptr + MISC_PTR_OFF, MISC_SIZE)
       loc = location_field(ptr, game)

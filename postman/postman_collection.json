@@ -2030,7 +2030,7 @@
       ]
     },
     {
-      "name": "8. Regalar Pokémon (caja 1 o equipo)",
+      "name": "8. Pokémon: regalar, mover entre equipo y cajas, liberar",
       "description": "Crea un Pokémon nuevo en el primer hueco libre de la caja 1. Comprobar en el PC: datos, movimientos, entrenador (Diego), y retirarlo al equipo. /state muestra la caja en 'box1'.",
       "item": [
         {
@@ -2559,6 +2559,111 @@
               ]
             },
             "description": "Para un huevo que ya está en el equipo."
+          }
+        },
+        {
+          "name": "Mover del equipo a la caja 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"move_pokemon\",\n  \"target\": {\n    \"slot\": 1\n  },\n  \"destination\": \"box2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Primer hueco libre de la caja 2 (o to_slot). El equipo se compacta."
+          }
+        },
+        {
+          "name": "Mover de la caja 1 al equipo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"move_pokemon\",\n  \"target\": {\n    \"box\": 1,\n    \"slot\": 0\n  },\n  \"destination\": \"party\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Calcula nivel, estadísticas y vida (hp opcional)."
+          }
+        },
+        {
+          "name": "Liberar un Pokémon de la caja 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"remove_pokemon\",\n  \"target\": {\n    \"box\": 2,\n    \"slot\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Lo borra. Sin box = del equipo (nunca deja el equipo sin uno que pueda luchar)."
           }
         }
       ]
