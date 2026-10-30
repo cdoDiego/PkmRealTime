@@ -20,6 +20,9 @@ local TRAINER_PTR_OFF = 0x19D20       -- datos del jugador
 local TRAINER_SIZE = 0x24
 local MISC_PTR_OFF = 0x21A20          -- dinero (u32) y medallas (u8 en +4): bloque Misc del save (0x21100)
 local MISC_SIZE = 8
+local GAMEDATA_PTR_OFF = 0x3666C     -- GameData (pokebw2): zona en +0x114, estación en +0x1C8, EventData* en +0x158
+local ZONE_OFF, SEASON_OFF, EVENTDATA_OFF = 0x114, 0x1C8, 0x158
+local ENCDATA_OFF, ENCDATA_SIZE = 0x38, 0xE8   -- tabla de encuentros de la zona dentro de EventData
 local HEADER_OFF = 0x3FFE00           -- copia de la cabecera del cartucho en Main RAM
 local BATTLE_TABLE_PTR_OFF = 0x526A8  -- tabla de la copia "visual" de los combatientes (tracker: mainBattleDataPtr)
 local BATTLE_SERVER_PTR_OFF = 0x52790 -- tabla de la copia "real", la que decide el combate (volcado combate1)
@@ -51,6 +54,8 @@ local GAMES = {
              weather = { mode = "battle", { 0x021D59E8, "28d91d02" } },                             -- -> battle_field
              script  = { mode = "map",    { 0x0201936C, "408a7047" },                               -- reserve_get
                                           { 0x02153DC8, "10b5041cc1f606fe01f0ecf9" } },             -- script_vm
+             encounters = { mode = "map", { 0x02017240, "5621890040587047" },                       -- GameData_GetEventData
+                                          { 0x0215CF70, "38307047" } },                             -- GetEncountData
            } },
   -- IREO (Black 2 USA/Europa): battle = 0x021B5138 según el tracker; falta encontrar "menu" (ver DOCUMENTACION.md)
 }
@@ -115,7 +120,7 @@ end
 local function compat_field(game)
   if game == nil or game.sigs == nil then return "-" end
   local t = {}
-  for _, f in ipairs({ "faint", "inject", "item", "weather", "script" }) do
+  for _, f in ipairs({ "faint", "inject", "item", "weather", "script", "encounters" }) do
     local v = check_sig(game, f)
     t[#t + 1] = f .. "=" .. (v == nil and "?" or (v and "1" or "0"))
   end
@@ -297,6 +302,20 @@ end
 local EV_SIZE, EV_POOL_MAX = 0x3C, 0x84
 local function r32(a) return memory.read_u32_le(off(a), DOMAIN) end
 local function w32(a, v) memory.write_u32_le(off(a), v, DOMAIN) end
+
+-- "<zona>:<estación>:<dir. tabla de encuentros>:<hex tabla>" (sin tabla: "-" en las dos últimas)
+local function location_field(ptr, game)
+  local gd = ptr + GAMEDATA_PTR_OFF
+  local zone = memory.read_u16_le(off(gd + ZONE_OFF), DOMAIN)
+  local season = memory.read_u8(off(gd + SEASON_OFF), DOMAIN)
+  local enc_addr, enc = "-", "-"
+  local ev = r32(gd + EVENTDATA_OFF)
+  if game ~= nil and check_sig(game, "encounters") ~= false and ev >= 0x02000000 and ev < 0x02400000 then
+    enc_addr = string.format("0x%08x", ev + ENCDATA_OFF)
+    enc = read_hex(ev + ENCDATA_OFF, ENCDATA_SIZE)
+  end
+  return string.format("%d:%d:%s:%s", zone, season, enc_addr, enc)
+end
 
 local function event_free(game, item)
   local list = game.event_list
@@ -489,7 +508,7 @@ while true do
     local addr, n = party_location()
     local mode = game_mode(game, addr)
     current_mode = mode
-    local party, bag, box, trainer, battle, misc = "-", "-", "-", "-", "-", "-"
+    local party, bag, box, trainer, battle, misc, loc = "-", "-", "-", "-", "-", "-", "-"
     if addr ~= nil and mode ~= "battle" then
       local ptr = addr - PARTY_PTR_OFF
       party = read_hex(addr, n * PARTY_SLOT_SIZE)
@@ -497,6 +516,7 @@ while true do
       box = read_hex(ptr + BOX1_PTR_OFF, BOX1_SIZE)
       trainer = read_hex(ptr + TRAINER_PTR_OFF, TRAINER_SIZE)
       misc = read_hex(ptr + MISC_PTR_OFF, MISC_SIZE)
+      loc = location_field(ptr, game)
     elseif addr ~= nil and mode == "battle" then
       battle = battle_hex(addr - PARTY_PTR_OFF, game)
       bag = read_hex(addr - PARTY_PTR_OFF + BAG_PTR_OFF, BAG_SIZE)   -- la mochila del combate es la misma (validado 27-oct)
@@ -516,8 +536,8 @@ while true do
     end
     if script_hooks and pending_script == nil then script_unhook() end
     local cf = compat_field(game)
-    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s", mode, addr or 0, party, bag, box, trainer,
-                                        code:gsub("[^%w]", "_"), crc, battle, misc, cf))
+    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s %s", mode, addr or 0, party, bag, box, trainer,
+                                        code:gsub("[^%w]", "_"), crc, battle, misc, cf, loc))
     handle(comm.socketServerResponse())
     gui.text(4, 4, "puente: " .. mode)
     if game == nil then gui.text(4, 20, "juego no soportado: " .. code .. " (no se escribe nada)") end

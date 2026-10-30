@@ -28,7 +28,7 @@ print("ok puente")
 
 # Las firmas del Lua se leen bien y coinciden con la ROM configurada (se salta si no está)
 sigs = rom_compare.lua_sigs()
-assert set(sigs) == {"faint", "inject", "item", "weather", "script"} and all(pairs for _, pairs in sigs.values())
+assert set(sigs) == {"faint", "inject", "item", "weather", "script", "encounters"} and all(pairs for _, pairs in sigs.values())
 path = config.rom_path()
 if not path or not os.path.exists(path):
     print("sin ROM: pruebas de la ROM saltadas"); sys.exit(0)

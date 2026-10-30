@@ -5,7 +5,8 @@ Ejecutar:  pip install fastapi uvicorn
 
 Protocolo con Lua (texto, una petición por mensaje):
   Lua -> Python:  "POLL <modo> <dir. equipo 0x...> <hex equipo|-> <hex mochila|-> <hex caja 1|-> <hex jugador|-> <código:crc> <combate|->
-                   <hex dinero|-> <compatibilidad: faint=1,inject=?,...|->"   (1 = código esperado, 0 = distinto, ? = sin ver)
+                   <hex dinero|-> <compatibilidad: faint=1,inject=?,...|-> <zona:estación:dir. encuentros:hex encuentros|->"
+                  (compatibilidad: 1 = código esperado, 0 = distinto, ? = sin ver; sin tabla de encuentros: "-" en sus campos)
   Python -> Lua:  comandos separados por ";"  (vacío = nada que hacer)
      W <addr> <hex>              escribe bytes
      G <addr> <hex_esperado> <hex_nuevo>   escribe solo si la memoria coincide
@@ -31,6 +32,7 @@ import bag
 import battle
 import battle_cmd
 import config
+import encounters
 import field_script
 import gamedata
 import gift
@@ -111,6 +113,7 @@ pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos 
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "money": None, "badges": None, "compat": {},
+        "location": None, "encounters": None,
         "connected": False, "updated": 0.0}
 NEEDS_DATA = {"heal", "set_move", "give_pokemon"}   # usan datos de la ROM (PP, especies, movimientos)
 party_raw: list[bytes] = []
@@ -118,6 +121,8 @@ bag_raw: bytes = b""
 box_raw: bytes = b""
 trainer_raw: bytes = b""
 misc_raw: bytes = b""          # dinero y medallas
+enc_raw: bytes = b""           # tabla de encuentros de la zona, tal como está en la RAM
+enc_addr: int = 0
 in_flight: Optional[int] = None
 ws_clients: set[WebSocket] = set()
 
@@ -299,7 +304,8 @@ def apply_change(d: dict, old: bytes) -> bytearray:
 # Funciones que dependen de código del juego en una dirección fija (el Lua comprueba sus bytes; ver "sigs" en connector.lua)
 COMPAT_NAMES = {"faint": "debilitar (vida 0 en combate)", "inject": "actualizar la pantalla del combate",
                 "item": "objeto en combate", "weather": "clima del combate", "script": "guiones propios (combates forzados, "
-                "clima del mapa, teletransporte, regalos al equipo, huevos)"}
+                "clima del mapa, teletransporte, regalos al equipo, huevos)",
+                "encounters": "encuentros salvajes de la zona"}
 
 
 def parse_compat(field: str) -> dict:
@@ -412,7 +418,7 @@ def prepare_data() -> None:
     import rom
     r = rom.Rom(path)
     info = gamedata.rom_info()
-    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "trainers" in gamedata.DATA:
+    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "zones" in gamedata.DATA:
         print(f"Datos del juego: {r.title} {r.code} (al día)")
         return
     print(f"Generando datos del juego desde {r.title} {r.code}...")
@@ -449,6 +455,17 @@ def update_misc(hexdata: str) -> None:
         misc_raw = raw
         game["money"] = struct.unpack_from("<I", raw, 0)[0]
         game["badges"] = bin(raw[4]).count("1")
+
+
+def update_location(field: str) -> None:
+    global enc_raw, enc_addr
+    loc, addr, raw = encounters.parse_location(field)
+    if loc is None:
+        return
+    game["location"] = loc
+    if raw != enc_raw:
+        game["encounters"] = encounters.parse(raw) if raw else None
+    enc_raw, enc_addr = raw, addr
 
 
 def money_commands(d: dict) -> str:
@@ -501,7 +518,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             if kind == "POLL":
                 mode, _, rest = rest.partition(" ")
                 addr, _, rest = rest.partition(" ")
-                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc, compatfield = (rest.split(" ") + ["-"] * 8)[:8]
+                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc, compatfield, locfield = (rest.split(" ") + ["-"] * 9)[:9]
                 update_game(gamefield)
                 game["compat"] = parse_compat(compatfield)
                 if mode != "battle":
@@ -519,6 +536,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     update_party("" if hexparty == "-" else hexparty)
                     update_box(hexbox, hextrainer)
                     update_misc(hexmisc)
+                    update_location(locfield)
                 # BizHawk 2.6.2+ solo lee respuestas "<longitud> <mensaje>"; sin eso se bloquea esperando
                 payload = next_commands().encode()
                 writer.write(str(len(payload)).encode() + b" " + payload)

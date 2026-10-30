@@ -19,6 +19,10 @@ LEARNSET = "a/0/1/8"     # movimientos por nivel
 MOVES = "a/0/2/1"        # datos de cada movimiento
 TEXT = "a/0/0/2"         # textos del juego
 TRDATA = "a/0/9/1"       # entrenadores: tipo de datos, clase, tipo de combate, nº de Pokémon...
+ZONES = "a/0/1/2"         # cabeceras de las zonas (48 bytes cada una, en un solo archivo)
+ENCOUNTERS = "a/1/2/7"    # tablas de encuentros salvajes (0xE8 bytes; 4 seguidas si cambian con la estación)
+ZONE_SIZE = 48
+TEXT_PLACES = 109         # nombres de los lugares
 TEXT_SPECIES = 90        # archivo de texto con los nombres de especie (B2/W2)
 TEXT_ABILITIES = 374
 TEXT_MOVES = 403
@@ -179,7 +183,19 @@ def build_data(rom: Rom) -> dict:
         # cada entrenador: [clase, tipo de combate (0 individual, 1 doble, 2 triple, 3 rotatorio), nº de Pokémon]
         "trainers": [[d[1], d[2], d[3]] if len(d) >= 4 else [0, 0, 0] for d in rom.narc(TRDATA)],
         "trainer_classes": rom.text(TEXT_TRAINER_CLASSES),
+        **zone_data(rom),
     }
+
+
+def zone_data(rom: Rom) -> dict:
+    """Zonas: [nº de nombre (TEXT_PLACES), tabla de encuentros o None]; tablas en hex (una por estación, o una sola)."""
+    hdr = rom.narc(ZONES)[0]
+    zones = []
+    for z in range(len(hdr) // ZONE_SIZE):
+        enc = struct.unpack_from("<H", hdr, z * ZONE_SIZE + 0x14)[0] & 0x1FFF     # 0x1FFF = sin encuentros
+        zones.append([hdr[z * ZONE_SIZE + 0x1A], None if enc == 0x1FFF else enc])
+    tables = [[f[i:i + 0xE8].hex() for i in range(0, len(f) - 0xE7, 0xE8)] for f in rom.narc(ENCOUNTERS)]
+    return {"zones": zones, "places": rom.text(TEXT_PLACES), "encounters": tables}
 
 
 def main() -> None:

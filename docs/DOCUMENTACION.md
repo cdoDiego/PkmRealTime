@@ -13,6 +13,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── bag.py                 Mochila: bolsillos, dar y quitar objetos
 ├── gift.py                Crear Pokémon nuevos (regalos); exporta .pk5 para PKHeX
 ├── battle.py              Estructura de combate (fase 5): lectura y escrituras
+├── encounters.py          Zona actual y tabla de encuentros salvajes de la zona
 ├── rom.py                 Lee datos de la ROM → gen5_data.json
 ├── gamedata.py            Carga gen5_data.json
 ├── move_pp.py             PP máximos (usa los de la ROM; tabla original de respaldo)
@@ -320,6 +321,60 @@ vuelve a poner cada vez que se regresa al mapa. Un combate que empieza con lluvi
 `WEATHER_START` (0x3F, clima y turnos) y `WEATHER_END` (0x40, clima). `battle_set_weather` escribe `sField` con guarda y manda
 el comando por la cola del cliente, igual que hace `ServerControl_ChangeWeatherCore`. Los turnos los descuenta el juego.
 
+### Encuentros salvajes del mapa (investigación, 28-oct)
+
+Objetivo: cambiar qué Pokémon salen en una ruta (p. ej. "Ruta 2 solo iniciales, domingo de 0:00 a 23:59") sin salir de la
+partida ni tocar la ROM.
+
+- Al entrar en una zona, el juego copia su tabla de encuentros de la ROM (archivo `a/1/2/7`, 135 tablas; `EncData_Load`,
+  overlay 12) a un bloque de **0xE8 bytes** en RAM. Cada encuentro salvaje se sortea **leyendo ese bloque en el momento**
+  (`FieldEncount_GenWilds(system->encData, ...)`), así que si lo cambiamos, el siguiente encuentro ya sale de la tabla nueva.
+- Dirección: `EventData = *(GameData + 0x158)` (getter `GameData_GetEventData`, arm9 `0x02017240`, igual en B2 y W2) y la tabla
+  está en `EventData + 0x38` (`GetEncountData`, overlay 12 W2 `0x0215CF70`: `adds r0, #0x38`). `GameData = puntero + 0x3666C`
+  (la misma base que la estación). En los volcados: `EventData = 0x0223B7C8`, tabla en `0x0223B800`.
+- **Comprobado con los volcados:** en `combate1.bin`/`combate2.bin` (Ruta 19) la tabla es Patrat/Purrloin niveles 2-4 en la
+  hierba y Basculin 5-15 en el agua, idéntica a la tabla 128 de `a/1/2/7` salvo el bit 7 del byte 7, que `EncData_Load` enciende
+  al cargar (marca "tabla válida"; sin él `EncSys_IsActive` no hay encuentros). En los volcados de ciudad la tabla está a cero.
+- **Validado en el juego (28-oct, Ruta 20):** se leyó la tabla en vivo (Sunkern, Sewaddle, Patrat... en la hierba; Audino en la
+  que se mueve) en la misma dirección `0x0223B800`; se escribieron los 12 iniciales de Kanto a Sinnoh en la hierba con
+  `debug_poke` y salieron Mudkip, Charmander y Chikorita seguidos. La tabla sigue cambiada después de los combates.
+  Al ir a Floccesy Town (sin encuentros) la tabla quedó a cero y al volver a la Ruta 20 el juego repuso la original:
+  **se recarga al cambiar de zona** (y al cargar un savestate vuelve la del savestate).
+- **Zona actual:** `PlayerState = GameData + 0x114` (`GameData_GetPlayerState`, arm9 `0x020171F4`: `movs r1,#0x45; lsls r1,#2`)
+  y la zona es su primer `u16` (`PlayerState_GetZoneID`). Ruta 20 = 446, Floccesy Town = 439, Ruta 19 = 437.
+- **De la ROM** (`rom.py` → `gen5_data.json`: `zones`, `places`, `encounters`): cabeceras de zona en `a/0/1/2` (un archivo,
+  48 bytes por zona, 615 zonas): `+0x14` u16 & 0x1FFF = tabla de encuentros (0x1FFF = ninguna), `+0x1A` u8 = nombre en el
+  texto 109. Las tablas de `a/1/2/7` de 928 bytes son 4 (una por estación: primavera, verano, otoño, invierno).
+  `encounters.rom_table(zona, estación)` da la tabla tal como la deja el juego en RAM (comprobado con el volcado de la Ruta 19).
+- `/state` muestra `location` y `encounters` (validado en el juego: Route 20 con los iniciales escritos, Floccesy Town vacía).
+
+Formato (`EncData`, nombres de swan):
+
+| Offset | Tamaño | Qué |
+| --- | --- | --- |
+| `+0x00` | 7 × u8 | tasa de cada tipo de encuentro (0 = no hay): hierba, hierba oscura (dobles), hierba que se mueve, surf, surf con ondas, pesca, pesca con ondas |
+| `+0x07` | u8 | bits 0-6 banderas; bit 7 = tabla cargada |
+| `+0x08` | 12 × 4 | hierba |
+| `+0x38` | 12 × 4 | hierba oscura (combates dobles salvajes) |
+| `+0x68` | 12 × 4 | hierba que se mueve |
+| `+0x98` | 5 × 4 | surf |
+| `+0xAC` | 5 × 4 | surf con ondas |
+| `+0xC0` | 5 × 4 | pesca |
+| `+0xD4` | 5 × 4 | pesca con ondas |
+
+Cada hueco: `u16` especie (bits 0-10) + forma (bits 11-15; 31 = forma al azar), `u8` nivel mínimo, `u8` nivel máximo. La
+probabilidad depende del hueco (en la hierba los primeros salen más; para "solo iniciales" se llenan los 12).
+
+Qué implica:
+- Se puede hacer en tiempo real: el puente escribe la tabla cuando el jugador está en la zona del evento y durante la ventana
+  de fecha/hora. Al cambiar de zona el juego carga la suya (vuelve sola a la normalidad); el Lua tendría que volver a
+  escribirla cada vez que se entre a la zona mientras dure el evento.
+- No sirve para zonas sin tabla (ciudades sin hierba): si la zona no tiene encuentros, `EncSys_IsActive` pone el bloque a cero
+  en cada paso. Tampoco crea hierba: solo cambia qué sale donde ya hay encuentros.
+- La hierba oscura usa su propia lista: también se pueden decidir los combates dobles salvajes de una ruta.
+- Falta: (1) ~~zona del jugador~~ hecho (abajo); (2) ~~recarga al cambiar de zona~~ confirmado; (3) ~~firmas~~ hecho (`encounters`); (4) ~~tablas de la ROM en `rom.py`~~ hecho; (5) el evento que
+  escribe la tabla con zona y ventana de fecha/hora, y la repone al acabar.
+
 ### Direcciones del tracker que aún no usamos (para la fase 5, combate)
 
 Son de `MemoryAddresses.lua` del NDS Ironmon Tracker (W2). Todas son puntero + offset, salvo que se diga otra cosa. **Ninguna está probada por nosotros.**
@@ -398,7 +453,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 
 | Dirección | Mensaje |
 | --- | --- |
-| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc> <compat>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6) |
+| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <hex caja 1> <hex jugador> <código:crc> <combate> <hex misc> <compat> <zona:estación:dir. encuentros:hex encuentros>` (equipo, mochila, caja, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6; la zona va como `-` en combate y la tabla de encuentros como `-` si no hay) |
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
@@ -528,6 +583,7 @@ ciegas (cuelgue o partida corrupta): solo se desactiva esa función.
 | `item` | punteros a `sItemEventAddTable` y a la lista de efectos | en combate | `battle_set_item` falla |
 | `weather` | puntero a `sField` | en combate | `battle_set_weather` falla |
 | `script` | `FieldStatus_GetReserveScript` (arm9) + `FieldScript_AttachOpcodeGuard` (overlay 12) | en el mapa; y otra vez justo al ejecutarse | combates forzados, clima del mapa, teletransporte, regalo al equipo y huevos fallan |
+| `encounters` | `GameData_GetEventData` (arm9) + `GetEncountData` (overlay 12) | en el mapa | no se lee (ni se escribirá) la tabla de encuentros |
 
 - Cada función queda `true` (código esperado), `false` (distinto) o `null` (aún no comprobada: su overlay no ha estado en
   memoria, p. ej. las de combate hasta el primer combate). Un acierto se queda para toda la sesión.
@@ -578,7 +634,7 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
-| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`), combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) y `compat` (qué funciones tienen el código esperado; sección 6) |
+| `GET` | `/state` | Modo, juego (`game`), si los datos son de esta ROM (`data_ok`), equipo, mochila (`bag`), caja 1 (`box1`), combate (`battle`: copia real de cada lado, con `hp_visual`, `conditions` y `stages`) `compat` (qué funciones tienen el código esperado; sección 6), `location` (zona, nombre del lugar y estación) y `encounters` (tabla de encuentros de la zona en RAM: tasa y huecos de cada tipo; `null` en zonas sin encuentros) |
 | `POST` | `/events` | Encola un evento. Devuelve su `id` |
 | `GET` | `/events` | Lista todos los eventos |
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
@@ -736,6 +792,8 @@ o si la memoria cambió entre la lectura y la escritura.
 | 28-oct | Firmas de código: el Lua comprueba los bytes de cada función antes de usarla y desactiva solo la que no coincida (`compat` en `/state`); `rom_compare.py` descomprime los overlays y revisa las firmas en el hack. |
 | 28-oct | Combate doble contra dos entrenadores (`trainer2`): el segundo rival está en el cliente 3 de la tabla de combate (`+0x54`), que el Lua ahora envía (también el compañero, cliente 2); salen como `enemy` 6-11. Validado (quemadura al Mudkip del segundo rival). |
 | 28-oct | **Randomizer (UPR ZX) validado:** datos idénticos al log del randomizer y pruebas en el juego (regalo, combates forzados, objeto en combate, huevo). `rom_compare.py` ahora mira las zonas cambiadas dentro de cada overlay (antes avisaba por cualquier cambio en el overlay 36). |
+| 28-oct | Investigación de encuentros por fecha: la tabla de encuentros de la zona está en RAM (`*(GameData + 0x158) + 0x38`, 0xE8 bytes) y se lee en cada encuentro; comprobada con los volcados de la Ruta 19 contra `a/1/2/7` y **validada en el juego** (Ruta 20 solo iniciales: salieron Mudkip, Charmander y Chikorita; dura tras los combates). Ideas futuras documentadas (sección 10). |
+| 29-oct | Zona actual (`GameData + 0x114`) y tabla de encuentros en `/state` (`location`, `encounters`), firma `encounters`; zonas, nombres y tablas de la ROM en `rom.py`. Validado: la tabla escrita vuelve a la original al salir y entrar de la zona. |
 
 ---
 
@@ -858,3 +916,47 @@ o si la memoria cambió entre la lectura y la escritura.
 
 ### Por buscar
 - [ ] Fase 5: validar las direcciones de combate del tracker.
+
+---
+
+## 10. Ideas futuras (28-oct)
+
+El puente es la base: todas estas ideas son formas distintas de **mandar eventos** al puente y de **mostrar lo que pasa** en el
+juego. Orden propuesto al final.
+
+```
+Twitch / ruleta / tienda de cartas / admin "en las sombras"
+              │  eventos
+     Servidor central (cuentas, monedas, cartas, torneo, página web)
+              │  cada jugador se conecta hacia el servidor (no se abren puertos)
+     Puente local de cada jugador ──► BizHawk/Lua ──► juego
+              │  avisos: capturó, se debilitó, ganó medalla, cambió de zona...
+     Overlay de OBS / reglas automáticas (nuzlocke)
+```
+
+| Idea | Qué es | Qué falta en el puente |
+| --- | --- | --- |
+| **Twitch** | Recompensas de canal, bits y subs activan eventos (paralizar, dar huevo, forzar combate...). Un archivo dice "recompensa X → evento Y". Twitch EventSub por websocket: no hace falta servidor propio. | Nada para los eventos que ya existen; tiempos de espera y "no en mal momento". |
+| **Ruleta** | Página (fuente de navegador en OBS) que gira y aplica el efecto que cae. | Nada. |
+| **Overlay en tiempo real** | Equipo, medallas, progreso, en OBS. | Leer medallas y zona actual; avisos de cambios. |
+| **Página pública** | Ver el equipo y la caja de cada jugador desde cualquier navegador. | Servidor central; cajas 2 en adelante. |
+| **Torneo** | Varias personas con ROMs randomizadas distintas; luego torneo con los Pokémon que pasen la liga (p. ej. exportados a Showdown). | Detectar la liga; exportar Pokémon (ya hay `pk5_export`). |
+| **Monedas y cartas** | Puntos por retos → comprar cartas: objetos, Pokémon, Poké Balls, curar, subir estadísticas, quemar al rival o a su equipo cuando esté en un gimnasio, robar / borrar / revivir Pokémon. | Saber contra qué entrenador pelea (gimnasio); quitar, mover y copiar Pokémon entre jugadores. |
+| **Nuzlocke automático** | Pokémon debilitado → caja de muertos; auditoría de capturas por ruta (si ya capturó ahí, se anuncia / libera salvo carta). | Avisos de "capturó" y "se debilitó"; quitar del equipo; cajas 2+. El Pokémon guarda dónde se capturó (lugar de encuentro del PK5), así la auditoría es fiable. |
+| **Entrenadores ocultos** | Alguien "en las sombras" lanza un combate contra un entrenador. | Ya funciona con entrenadores existentes (`start_trainer_battle`); con equipo inventado, por investigar. |
+| **Encuentros por fecha** | P. ej. Ruta 2 solo iniciales, Ruta 8 solo pseudolegendarios, en una fecha y hora; luego vuelve a la normalidad. | Investigado y probado en el juego (sección 2, "Encuentros salvajes del mapa"): escribir la tabla en RAM funciona; falta la zona actual y el evento con fecha/hora. |
+
+Requisitos comunes:
+- Todo en tiempo real y sin salir de la partida.
+- Seguridad: el puente local nunca se expone a internet; el servidor decide qué se permite (límites, tiempos de espera) y el
+  puente solo acepta lo que llega por su conexión.
+- Eventos en cola que esperan el momento correcto (como ya hacen los de combate y los guiones).
+
+Orden propuesto:
+1. **Base del puente:** avisos de sucesos (captura, debilitado, medalla, cambio de zona), leer medallas y zona, quitar/mover
+   Pokémon, cajas 2+.
+2. Overlay de OBS y ruleta.
+3. Twitch.
+4. Nuzlocke automático.
+5. Servidor con monedas, cartas, torneo y página pública.
+6. Encuentros por fecha (tras la zona actual del paso 1) y entrenadores con equipo inventado.
