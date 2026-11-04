@@ -20,6 +20,7 @@ import collections
 import itertools
 import json
 import os
+import re
 import struct
 import time
 from dataclasses import dataclass, field, asdict
@@ -44,6 +45,7 @@ import happenings
 import pc
 import roulette
 import pk5
+import wondercard
 
 # ---------------------------------------------------------------- modelos
 When = Literal["en_mapa", "en_combate", "cualquiera"]
@@ -60,7 +62,7 @@ class EventIn(BaseModel):
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
                   "give_pokemon", "give_egg", "move_pokemon", "remove_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season", "set_shiny_odds",
-                  "start_wild_battle", "start_trainer_battle", "set_weather", "teleport",
+                  "start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_wonder_card",
                   "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo; {"box": 2, "slot": 0} = caja
@@ -103,6 +105,10 @@ class EventIn(BaseModel):
     hatch_cycles: Optional[int] = None   # give_egg / set_egg_cycles: ciclos para eclosionar (0-255; 0 = casi ya)
     odds: Optional[int] = None       # set_shiny_odds: variocolor 1 de cada N encuentros salvajes (2-8192; sin odds = normal)
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
+    pgf: Optional[str] = None        # give_wonder_card: tarjeta oficial de la carpeta wondercards/ (ej. "genesect")
+    title: Optional[str] = None      # give_wonder_card: título de la tarjeta (máx. 36 letras)
+    ot: Optional[str] = None         # give_wonder_card: entrenador original del Pokémon (máx. 7 letras; por defecto "Regalo")
+    card_id: Optional[int] = None    # give_wonder_card: ID de la tarjeta (0-2047; por defecto uno libre de 1500-2045)
 
 
 @dataclass
@@ -118,6 +124,7 @@ class Event:
 _ids = itertools.count(1)
 events: dict[int, Event] = {}
 queue: list[int] = []
+album_jobs: dict = {}     # give_wonder_card: id del evento -> {"card", "block" (álbum leído), "custom", "slot"}
 pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos de esa especie que ya había
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
@@ -216,6 +223,8 @@ def build_commands(ev: Event) -> str:
         if d["expect"]:
             return f"SAVE;G {addr:#x} {bytes.fromhex(d['expect']).hex()} {data}"
         return f"SAVE;W {addr:#x} {data}"
+    if d["type"] == "give_wonder_card":
+        return wonder_card_commands(ev)
     if d["type"] in FIELD_SCRIPT_EVENTS:   # guiones propios: el juego los ejecuta con el personaje libre en el mapa
         if game["mode"] == "battle":
             raise ValueError("no se puede durante un combate")
@@ -320,6 +329,58 @@ def build_commands(ev: Event) -> str:
         addr = game["party_addr"] + slot * config.PARTY_SLOT_SIZE
         cmds.append(f"G {addr:#x} {old.hex()} {bytes(new).hex()}")
     return ";".join(cmds)
+
+
+WONDERCARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wondercards")
+
+
+def make_wonder_card(d: dict) -> tuple[bytes, bool]:
+    """(tarjeta, si es propia). Propia = hecha aquí: se le pone un ID libre al escribirla."""
+    if d.get("pgf"):
+        name = str(d["pgf"])
+        if not re.fullmatch(r"[\w\- ]+(\.pgf|\.wc5full)?", name):
+            raise ValueError("pgf: solo el nombre de un archivo de la carpeta wondercards/")
+        path = os.path.join(WONDERCARD_DIR, name if "." in name else name + ".pgf")
+        if not os.path.isfile(path):
+            raise ValueError(f"no existe wondercards/{os.path.basename(path)}")
+        card = wondercard.load_pgf(path)
+        if d.get("card_id") is not None:
+            raise ValueError("card_id no se puede cambiar en una tarjeta oficial")
+        return card, False
+    if d.get("species") is not None:
+        if not game["data_ok"]:
+            raise ValueError("faltan los datos de la ROM (gen5_data.json) para elegir los movimientos")
+        sp, level = int(d["species"]), int(d["level"] or 10)
+        gift.species_info(sp)   # valida la especie
+        moves = d["moves"] or gift.default_moves(sp, level)
+        card = wondercard.pokemon_card(sp, level, moves, card_id=0, title=d.get("title") or "Regalo misterioso",
+                                       ot=d.get("ot") or "Regalo", shiny=d["shiny"], item=int(d["item"] or 0))
+        return card, True
+    if d.get("item"):
+        return wondercard.item_card(int(d["item"]), card_id=0, title=d.get("title") or "Regalo misterioso"), True
+    raise ValueError("give_wonder_card necesita pgf, species o item")
+
+
+def wonder_card_commands(ev: Event) -> str:
+    """Dos pasos: 1) leer el álbum (cifrado); 2) con lo leído, escribir la tarjeta y su bandera con guardas."""
+    addr = game["party_addr"] - config.PARTY_PTR_OFF + wondercard.MYSTERY_PTR_OFF
+    job = album_jobs.get(ev.id)
+    if job is None or job["block"] is None:
+        card, custom = make_wonder_card(ev.data)   # falla antes de leer nada si la tarjeta no vale
+        album_jobs[ev.id] = {"card": card, "custom": custom, "block": None}
+        size = wondercard.BLOCK_SIZE
+        return ";".join(f"R {addr + o:#x} {min(0x400, size - o)}" for o in range(0, size, 0x400))
+    job["block"], block = None, job["block"]   # si algo falla abajo, la próxima vez se vuelve a leer
+    card = job["card"]
+    if job["custom"]:
+        cid = ev.data.get("card_id")
+        if cid is not None and not 0 <= int(cid) <= wondercard.MAX_CARD_ID:
+            raise ValueError(f"card_id va de 0 a {wondercard.MAX_CARD_ID}")
+        card = wondercard.set_card_id(card, int(cid) if cid is not None else
+                                      wondercard.free_card_id(wondercard.decrypt_block(block)))
+    slot, writes = wondercard.add_card_writes(block, card)
+    job["slot"] = slot
+    return "SAVE;" + ";".join(f"G {addr + o:#x} {old.hex()} {new.hex()}" for o, old, new in writes)
 
 
 def bag_commands(d: dict) -> str:
@@ -467,6 +528,7 @@ def next_commands() -> str:
             cmds = build_commands(ev)
         except ValueError as e:
             ev.state, ev.detail = "fallo", str(e)
+            album_jobs.pop(eid, None)
             continue
         ev.state, in_flight = "enviado", eid
         return cmds
@@ -774,11 +836,24 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             elif kind == "RES" and in_flight is not None:
                 ok, _, detail = rest.partition(" ")
                 ev = events[in_flight]
+                job = album_jobs.get(ev.id)
+                if job is not None and ok == "ok" and job["block"] is None and "slot" not in job:
+                    # give_wonder_card leyó el álbum: vuelve a la cola para escribir con lo leído
+                    job["block"] = bytes.fromhex("".join(p.strip()[2:] for p in detail.split(",")))
+                    ev.state, ev.detail, in_flight = "pendiente", "álbum leído", None
+                    queue.insert(0, ev.id)
+                    continue
                 ev.state, ev.detail, in_flight = ("aplicado" if ok == "ok" else "fallo"), detail, None
+                if job is not None:
+                    album_jobs.pop(ev.id, None)
+                    if ok == "ok":
+                        ev.detail = (f"tarjeta en el hueco {job['slot']} del álbum: sal y vuelve a entrar a un "
+                                     "Centro Pokémon y habla con el repartidor")
                 await broadcast({"kind": "event", "event": asdict(ev)})
     finally:
         box_cache.clear()
         missing_polls.clear()
+        album_jobs.clear()
         last_snap = None   # al reconectar se empieza de cero (sin avisos de todo lo que ya había)
         game["connected"] = False
         in_flight = None

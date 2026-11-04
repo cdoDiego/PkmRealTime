@@ -98,6 +98,13 @@ def _faint_one(game, rng):
     return f"¡{_who(m)} se debilitó!", [{"type": "set_hp", "hp": 0, "target": {"slot": i}}]
 
 
+def _wonder_card(game, rng):
+    sp, lvl = rng.randint(1, MAX_SPECIES), _avg_level(game)
+    name = species_name(sp)
+    return (f"¡Regalo misterioso: {name} (Nv. {lvl})! Recógelo con el repartidor del Centro Pokémon",
+            [{"type": "give_wonder_card", "species": sp, "level": lvl, "title": f"¡{name} de regalo!"[:36]}])
+
+
 def _wild_battle(game, rng):
     sp, lvl = rng.randint(1, MAX_SPECIES), min(100, _avg_level(game) + 2)
     return f"¡Un {species_name(sp)} salvaje (Nv. {lvl}) te ataca!", [{"type": "start_wild_battle", "species": sp, "level": lvl}]
@@ -135,6 +142,8 @@ EFFECTS = {
     "dinero_menos": ("-3.000 ₽", "Pierde 3.000 ₽", _money(-3000), 2, True),
     "pokemon": ("Pokémon al azar", "Un Pokémon al azar del nivel medio del equipo, a la caja 1", _random_pokemon(False), 2, True),
     "shiny": ("Variocolor al azar", "Un Pokémon variocolor al azar, a la caja 1", _random_pokemon(True), 1, False),
+    "regalo_misterioso": ("Regalo misterioso", "Un Pokémon al azar del nivel medio del equipo como Tarjeta Misteriosa: "
+                          "lo entrega el repartidor del Centro Pokémon", _wonder_card, 2, True),
     "paralizar": ("Parálisis", "Paraliza a un Pokémon al azar del equipo", _status_one("paralysis", "¡{} quedó paralizado!"), 2, True),
     "dormir": ("Sueño", "Duerme a un Pokémon al azar del equipo", _status_one("sleep", "¡{} se durmió!"), 2, True),
     "envenenar": ("Veneno a todos", "Envenena a todo el equipo", _poison_all, 1, True),

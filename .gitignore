@@ -32,3 +32,6 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# tarjetas del Regalo Misterioso descargadas (datos del juego)
+wondercards/

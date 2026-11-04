@@ -19,6 +19,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── pc.py                  Mover y quitar Pokémon entre equipo y cajas
 ├── effects.py             Catálogo de efectos con nombre (premios de la ruleta; luego Twitch y cartas)
 ├── roulette.py            Ruleta: premios guardados en roulette.json y elección por peso
+├── wondercard.py          Regalo Misterioso: tarjetas PGF y cifrado del álbum
 ├── rom.py                 Lee datos de la ROM → gen5_data.json
 ├── gamedata.py            Carga gen5_data.json
 ├── move_pp.py             PP máximos (usa los de la ROM; tabla original de respaldo)
@@ -27,16 +28,17 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── requirements.txt
 ├── overlay/               Overlay y ruleta para OBS (páginas de configuración + vistas); lo sirve el puente en /overlay/
 ├── lua/                   Scripts de BizHawk: connector.lua, dump_ram.lua, watch_ram.lua
-├── tools/                 ram_tool.py (análisis de volcados)
+├── tools/                 ram_tool.py (análisis de volcados), wonder_card.py (álbum del Regalo Misterioso)
 ├── tests/                 Pruebas (run_all.py las ejecuta todas)
 ├── postman/               Colección de Postman con todas las peticiones
 ├── docs/                  Esta documentación
 ├── dumps/                 Volcados de RAM (no se suben)
+├── wondercards/           Tarjetas oficiales .pgf descargadas (no se suben)
 └── pk5_export/            .pk5 generados (no se suben)
 ```
 
 No se suben a git (ver `.gitignore`): `config_local.py`, `roulette.json`, ROMs y partidas, `gen5_data.json` (sale de la ROM de cada persona),
-`dumps/` y `pk5_export/`.
+`dumps/`, `pk5_export/` y `wondercards/`.
 
 ## 1. Cómo encaja todo
 
@@ -99,6 +101,7 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | `sItemEventAddTable` | `0x021D8F68` | 171 × {u32 objeto, función} | Objetos con efecto en combate; cada función es `movs r1,#n; str r1,[r0]; ldr r0,=tabla; bx lr` (nº de efectos y su tabla) | pokebw2 (B2 + `0x40`; confirmado en el volcado) | ✅ usado 28-oct |
 | Lista de efectos del combate | `0x021DB1D4` (+ huecos libres en `0x021DB1E0`) | u32 profundidad, primera entrada, nº en uso | Efectos registrados (habilidades, objetos...), por prioridad. Entradas de `0x3C` bytes | pokebw2 `battle_event.c` (B2 + `0x40`; confirmado en el volcado) | ✅ escrito 28-oct |
 | Estación y sincronización forzada (`GameData`) | puntero + `0x36834` (estación) y `+ 0x0A` (marca) | u8 + u8 | Estación (0 primavera, 1 verano, 2 otoño, 3 invierno) en `GameData + 0x1C8`; marca de sincronización forzada en `GameData + 0x1D2` | Código Action Replay "Season Changing" (documentos de Volt White 2) + pokebw2 `GameData_GetSeasons` | ✅ escrito 28-oct (nieve en octubre) |
+| Álbum del Regalo Misterioso | puntero + `0x1D120` | `0xA94` bytes | Bloque del save `0x1C800`, **cifrado también en RAM** (LCRNG de PK5 sobre `0xA90` bytes; semilla = checksum u16 `+0xA90` + clave u16 `+0xA92` << 16). `+0x000` banderas "ya recibido" (2048 bits), `+0x100` 12 tarjetas PGF de `0xCC` (tipo `+0xB3`: 1 Pokémon, 2 objeto, 3 poder; ID `+0xB0`; `+0xB4` bit 0 = una vez, bit 1 = entregada) | pokebw2 `save/mystery_gift.h`, `system/mystery_data.c` + PKHeX (`PGF`, `MysteryBlock5`) | ✅ escrito 03-nov (Genesect, Pikachu y objeto entregados) |
 
 Leyenda: ✅ validado en el juego · 🟡 encontrado, falta confirmar algo · ⚪ pendiente.
 
@@ -782,6 +785,17 @@ Eventos disponibles:
 - `set_shiny_odds`: probabilidad de variocolor en los encuentros salvajes (`odds`: 1 de cada N, de 2 a 8192; sin `odds`
   = normal). Sale del todo con 1/8192 de serie; queda puesto hasta quitarlo (o cerrar el Lua). Si el Lua se reconecta,
   el puente lo vuelve a mandar. Solo White 2 (`IRDO`) por ahora.
+- `give_wonder_card`: mete una Tarjeta Misteriosa en el álbum; el regalo lo entrega el **repartidor** del Centro Pokémon
+  (hay que salir y volver a entrar: el guion `global_10395` lo pone o lo quita al cargar el mapa, según haya tarjetas sin
+  entregar). Tres formas: `pgf` = tarjeta oficial de la carpeta `wondercards/` (nombre sin ruta, ej. `"genesect"`; las
+  de la galería de Project Pokémon, que no se suben a git); `species` (+ `level`, `moves`, `shiny`, `item` = objeto que
+  lleva, `ot`, `title`) = tarjeta de Pokémon hecha aquí con los valores de las oficiales (Gloria Ball, naturaleza, género
+  e IV al azar, "Un lugar encantador"); solo `item` (+ `title`) = tarjeta de objeto. Las propias reciben un ID libre de
+  1500-2045 (o `card_id`) y se marca como recibido, como hace el juego. Va al primer hueco vacío o al de una tarjeta ya
+  entregada; falla si las 12 están sin recoger o la misma tarjeta ya está. Por dentro: primero lee el álbum (`R`) y
+  luego escribe con guardas (`G`), así que si el juego lo tocó entre medias no se escribe nada. El juego no comprueba el
+  checksum al leerlo y lo recalcula al marcar la tarjeta como entregada. `tools/wonder_card.py` hace lo mismo desde la
+  consola (y `list` muestra el álbum).
 - `set_season`: estación del mapa (`season`: `spring`/`summer`/`autumn`/`winter`, en español, o 0-3; `real` vuelve a la
   del reloj). Se ve al cambiar de mapa (salir de un edificio). Al cambiar de mapa el juego pone la estación del mes
   (`GameData_GetSeasons`) salvo con la sincronización forzada activa (la de jugar conectado), que el evento enciende.
@@ -868,7 +882,8 @@ Notas:
   (objetivos al azar: nunca huevos ni debilitados; "Debilitar a uno" nunca deja el equipo sin nadie en pie). De fábrica:
   nada, curar, Poké/Ultra/Master Ball, caramelo raro, revivir, ±dinero, Pokémon al azar (o variocolor) a la caja 1 del
   nivel medio, parálisis/sueño a uno, veneno a todos, debilitar a uno, combate salvaje (+2 niveles), lluvia, nieve y
-  viaje a una ciudad y "Hora variocolor" (1/50 durante 10 min). Desactivados de fábrica: Master Ball, variocolor,
+  viaje a una ciudad y "Hora variocolor" (1/50 durante 10 min). "Regalo misterioso" (03-nov): Pokémon al azar del
+  nivel medio como Tarjeta Misteriosa, que entrega el repartidor; si ya tienes `roulette.json`, actívalo en la página. Desactivados de fábrica: Master Ball, variocolor,
   debilitar y viaje. Un efecto puede devolver eventos con `after` (segundos): se aplican después y otro del mismo tipo
   reinicia la espera (`schedule_event`), así dos horas variocolor seguidas no se cortan antes.
 - Pendiente: acomodar opciones y diseño (MVP validado).
@@ -934,6 +949,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 03-nov | Regalo Misterioso: álbum en puntero + `0x1D120`, cifrado en RAM; `wondercard.py` (formato PGF y cifrado), `tools/wonder_card.py`, evento `give_wonder_card` (lee y luego escribe con guardas) y premio de ruleta "Regalo misterioso". El repartidor aparece al cargar el mapa del Centro si hay tarjetas sin entregar (guion `global_10395`, comando `MysteryGifts`). Validado: Genesect oficial, Pikachu variocolor propio y Caramelo Raro entregados por el repartidor; se conservan al guardar y reiniciar. |
 
 ---
 
@@ -1032,6 +1048,13 @@ Notas:
 - [x] El parche vuelve solo tras cada combate (memoria leída en el mapa) y no se toca en combate.
 - [x] Quitarlo (sin `odds`): la memoria vuelve a ser la de la ROM.
 - [ ] "Hora variocolor" de la ruleta: vuelve a lo normal a los 10 minutos.
+
+### Regalo Misterioso (en el juego)
+- [x] Tarjeta oficial (Genesect) escrita en vivo: el repartidor aparece al volver a entrar al Centro y la entrega.
+- [x] Tarjeta propia (Pikachu variocolor, Nv. 10) y tarjeta de objeto (Caramelo Raro).
+- [x] Guardar y reiniciar: se conserva lo recibido y las tarjetas quedan entregadas.
+- [ ] `give_wonder_card` por el puente y el premio de la ruleta (probado solo con un Lua simulado).
+- [ ] Álbum lleno: la 13.ª tarjeta reemplaza a una ya entregada.
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
