@@ -13,6 +13,9 @@ Cada uno apunta a una estructura de combatiente, sin cifrar:
   +0x0E HP máximo (u16)   +0x10 HP actual (u16)   +0x12 objeto (u16)   +0x18 nivel (u8)   +0x20 estado (u32)
   +0xEE Atq, Def, AtE, DfE, Vel (u16)   +0xFC cambios de estadísticas (7 bytes, 6 = sin cambio)
   +0x104 movimientos: 4 × 14 bytes (u16 movimiento, u8 PP, ...)
+Del resto de BattleMon (include/battle/btl_pokeparam.h de pokebw2; validado con combate1/combate2 el 04-nov):
+  +0xF8 tipos (2 × u8)   +0x13C habilidad activa (u16; +0x16 es la original)   +0x146 turnos en el campo (u16)
+  +0x14A último movimiento usado (u16)   +0x152 posición de su último objetivo   +0x155 banderas de estado (2 bytes)
 """
 import struct
 
@@ -22,6 +25,7 @@ import pk5
 
 OFF_MAX_HP, OFF_HP, OFF_ITEM, OFF_LEVEL, OFF_STATUS = 0x0E, 0x10, 0x12, 0x18, 0x20
 OFF_STATS, OFF_STAGES, OFF_MOVES, MOVE_STRIDE = 0xEE, 0xFC, 0x104, 14
+OFF_TYPES, OFF_ABILITY_NOW, OFF_TURNS_ON_FIELD, OFF_PREV_MOVE, OFF_COND_FLAGS = 0xF8, 0x13C, 0x146, 0x14A, 0x155
 
 # Cambios de estadísticas: 7 bytes desde +0xFC, 6 = sin cambio (rango 0-12 → -6..+6).
 # Validados en el juego: atk (Gruñido) y def (Malicioso, Látigo). El resto sigue el orden de las estadísticas.
@@ -67,6 +71,8 @@ def set_weather_command(weather: str, turns=None) -> str:
 
 
 SECOND_CLIENT = 6   # índice del primer Pokémon del compañero o del segundo rival
+# Pokémon en el campo de cada lado (1 individual, 2 doble, 3 triple): sale del tamaño de la respuesta a "elegir acción"
+ACTIVE_COUNT = {"player": 1, "enemy": 1}
 
 # Bytes crudos del último POLL: {("player"|"enemy", índice, "real"|"visual"): (dirección, estructura)}
 RAW: dict = {}
@@ -90,6 +96,15 @@ def parse(field: str) -> dict:
         if bits[0] == "T":
             out["table"] = bits[1]
             continue
+        if bits[0][0] == "Q":                   # adaptador: lo que el servidor pidió a ese cliente y su respuesta
+            out.setdefault("adapters", {})[int(bits[0][1:])] = parse_adapter(bits[1:])
+            continue
+        if bits[0] == "H":                      # pausa del rival: activa, frames que lleva, activada
+            out["hold"] = {"active": bits[1] == "1", "frames": int(bits[2]), "enabled": bits[3] == "1"}
+            continue
+        if bits[0] == "N":                      # turno (sube cada vez que se pide elegir acción)
+            out["turn"] = int(bits[1])
+            continue
         side, idx, addr, raw, mon = bits[0][0], int(bits[0][1:]), int(bits[1], 16), bytes.fromhex(bits[2]), bits[3]
         name = "player" if side in "pPaA" else "enemy"
         if side in "aAfF":                       # compañero / segundo rival
@@ -103,7 +118,22 @@ def parse(field: str) -> dict:
             vis = RAW.get((name, info["index"], "visual"))
             info["hp_visual"] = struct.unpack_from("<H", vis[1], OFF_HP)[0] if vis else None
         out[name].sort(key=lambda i: i["index"])
+    for side, adapter in (("player", 0), ("enemy", 1)):   # cuántos hay en el campo de cada lado
+        a = out.get("adapters", {}).get(adapter)
+        if a and a["cmd"] == 3 and a["returned"] and a["reply"]:
+            ACTIVE_COUNT[side] = max(1, min(3, len(a["reply"]) // 8))
     return out
+
+
+ADAPTER_CMDS = {3: "accion", 5: "cambio_debilitado", 6: "cambio_medio_turno", 8: "turno"}
+
+
+def parse_adapter(bits: list) -> dict:
+    """Q<i>:<dir>:<+0x0C..+0x13>:<dir. respuesta>:<respuesta>:<datos del pedido> (ver connector.lua)."""
+    head = bytes.fromhex(bits[1])
+    return {"addr": int(bits[0], 16), "returned": bool(head[0] & 0xF), "client": head[1], "state": head[2],
+            "cmd": struct.unpack_from("<H", head, 4)[0], "size": struct.unpack_from("<H", head, 6)[0],
+            "reply_addr": int(bits[2], 16), "reply": "" if bits[3] == "-" else bits[3], "data": bits[4]}   # en hex
 
 
 def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
@@ -118,6 +148,14 @@ def describe(idx: int, addr: int, raw: bytes, mon_hex: str) -> dict:
         "stages": stages(raw),
         "moves": [],
     }
+    if len(raw) >= OFF_COND_FLAGS + 2:
+        abilities = gamedata.DATA.get("abilities", [])
+        ab = u16(OFF_ABILITY_NOW)
+        prev = u16(OFF_PREV_MOVE)
+        info.update(types=[raw[OFF_TYPES], raw[OFF_TYPES + 1]], turns_on_field=u16(OFF_TURNS_ON_FIELD),
+                    ability_now=abilities[ab] if ab < len(abilities) else ab, ability_now_id=ab,
+                    prev_move=names[prev] if prev and prev < len(names) else None,
+                    volatile=volatile(raw), locked=locked(raw))
     for i in range(4):
         move, pp, max_pp = struct.unpack_from("<HBB", raw, OFF_MOVES + MOVE_STRIDE * i)
         if move:
@@ -147,6 +185,121 @@ BLOCK = slice(OFF_SICK + 4, OFF_SICK + 4 * 6)        # entradas 1..5 (+0x20..+0x
 COUNTERS = slice(OFF_COUNTERS + 1, OFF_COUNTERS + 6)  # sus contadores (+0xAD..+0xB1)
 SLEEP_TURNS = 3                                       # turnos sin atacar por defecto; el juego elige entre 1 y 3
 TOXIC = 1 | (15 << 3)
+
+
+# Las demás condiciones (constants/battle.h de pokebw2). Cada una es un u32: bits 0-2 tipo (0 = no la tiene, 1 permanente,
+# 2 por turnos, 3 mientras siga otro Pokémon, 4 las dos cosas), bits 3-8 turnos, y un dato (movimiento de Otra vez,
+# Anulación, Objeto elección o ataque encadenado): bits 9-24 (bits 15-30 en el tipo 4). Validadas de momento solo las
+# de estado principal; el resto sigue la decompilación.
+CONDITIONS = {
+    6: ("confusion", "confusión"), 7: ("attract", "enamorado"), 8: ("bind", "atrapado (Atadura, Constricción...)"),
+    9: ("nightmare", "pesadilla"), 10: ("curse", "maldición"), 11: ("taunt", "mofa"), 12: ("torment", "tormento"),
+    13: ("disable", "anulación"), 14: ("yawn", "bostezo"), 15: ("heal_block", "anticura"), 16: ("gastro_acid", "bilis"),
+    17: ("foresight", "profecía"), 18: ("leech_seed", "drenadoras"), 19: ("embargo", "embargo"),
+    20: ("perish_song", "canto mortal"), 21: ("ingrain", "arraigo"),
+    22: ("mean_look", "no puede huir (Mal de Ojo, Bloqueo...)"), 23: ("encore", "otra vez"), 24: ("roost", "respiro"),
+    25: ("move_lock", "ataque encadenado"), 26: ("charge", "cargando un ataque"),
+    27: ("choice_lock", "bloqueado por objeto elección"), 28: ("always_hit", "no falla"), 29: ("lock_on", "fijado"),
+    30: ("magnet_rise", "levitón"), 31: ("smack_down", "derribado"), 32: ("telekinesis", "telequinesis"),
+    33: ("sky_drop", "caída libre"), 34: ("micle_berry", "baya lagro"), 35: ("aqua_ring", "acua aro"),
+}
+CONDITION_ID = {key: i for i, (key, _) in CONDITIONS.items()}
+RECHARGE_FLAG = 12   # bandera que hace que el cliente elija "no hacer nada" (AutoSelectAction: recarga de Hiperrayo...)
+
+
+def condition_raw(raw: bytes, index: int) -> int:
+    return struct.unpack_from("<I", raw, OFF_SICK + 4 * index)[0]
+
+
+def condition_param(value: int) -> int:
+    """El dato de la condición (Condition_GetParam en battle_condition.c)."""
+    kind = value & 7
+    if kind in (1, 2, 3):
+        return (value >> 9) & 0xFFFF
+    if kind == 4:
+        return (value >> 15) & 0xFFFF
+    return 0
+
+
+def has_condition(raw: bytes, key: str) -> bool:
+    return condition_raw(raw, CONDITION_ID[key]) & 7 != 0
+
+
+def has_flag(raw: bytes, flag: int) -> bool:
+    return bool(raw[OFF_COND_FLAGS + (flag >> 3)] >> (flag & 7) & 1)
+
+
+def volatile(raw: bytes) -> list[dict]:
+    """Condiciones activas además del estado principal: [{"key", "label", "turns", "counter", ...}]."""
+    out = []
+    names = gamedata.DATA.get("moves", [])
+    for i, (key, label) in CONDITIONS.items():
+        value = condition_raw(raw, i)
+        if value & 7:
+            entry = {"key": key, "label": label, "turns": (value >> 3) & 0x3F, "counter": raw[OFF_COUNTERS + i]}
+            if key in ("encore", "disable", "choice_lock", "move_lock"):
+                move = condition_param(value)
+                entry["move"] = names[move] if move < len(names) else move
+                entry["move_id"] = move
+            out.append(entry)
+    return out
+
+
+def locked(raw: bytes):
+    """Si el juego elige solo su acción este turno (AutoSelectAction): ataque encadenado, cargando o recargando."""
+    names = gamedata.DATA.get("moves", [])
+    if has_flag(raw, RECHARGE_FLAG):
+        return {"reason": "recharge", "label": "recargando (no puede actuar este turno)"}
+    for key, label in (("move_lock", "sigue con su ataque encadenado"), ("charge", "termina el ataque que cargó")):
+        if has_condition(raw, key):
+            if key == "move_lock":
+                move = condition_param(condition_raw(raw, CONDITION_ID[key]))
+            else:
+                move = struct.unpack_from("<H", raw, OFF_PREV_MOVE)[0]
+            return {"reason": key, "label": label, "move": names[move] if move < len(names) else move}
+    return None
+
+
+# Atrapado (IsMonTrapped / CanMonSwitch en btl_client.c): Sombra Trampa, Trampa Arena, Imán y las condiciones.
+ABILITY_SHADOW_TAG, ABILITY_ARENA_TRAP, ABILITY_MAGNET_PULL, ABILITY_LEVITATE, ABILITY_KLUTZ = 23, 71, 42, 26, 103
+ITEM_SHED_SHELL, ITEM_IRON_BALL, ITEM_AIR_BALLOON = 295, 278, 541
+TYPE_FLYING, TYPE_STEEL = 2, 8
+
+
+def ability_now(raw: bytes) -> int:
+    return struct.unpack_from("<H", raw, OFF_ABILITY_NOW)[0]
+
+
+def item_usable(raw: bytes) -> bool:
+    """Puede usar su objeto: sin Embargo ni Zoquete (no ve Magia Negra, que es del campo)."""
+    return not has_condition(raw, "embargo") and ability_now(raw) != ABILITY_KLUTZ
+
+
+def trapped(raw: bytes, opponents: list[bytes]):
+    """None si puede cambiar; si no, el motivo. opponents = estructuras de los rivales que están en el campo.
+    No ve la Gravedad (efecto del campo), que también deja atrapado con Trampa Arena."""
+    item = struct.unpack_from("<H", raw, OFF_ITEM)[0]
+    if item_usable(raw) and item == ITEM_SHED_SHELL:
+        return None
+    types = (raw[OFF_TYPES], raw[OFF_TYPES + 1])
+    for opp in opponents:
+        ab = ability_now(opp)
+        if ab == ABILITY_SHADOW_TAG and ability_now(raw) != ABILITY_SHADOW_TAG:
+            return "Sombra Trampa del rival"
+        if ab == ABILITY_ARENA_TRAP:
+            airborne = (ability_now(raw) == ABILITY_LEVITATE or TYPE_FLYING in types
+                        or has_condition(raw, "magnet_rise") or has_condition(raw, "telekinesis")
+                        or (item_usable(raw) and item == ITEM_AIR_BALLOON))
+            forced_down = (has_condition(raw, "smack_down") or has_condition(raw, "ingrain")
+                           or (item_usable(raw) and item == ITEM_IRON_BALL))
+            if forced_down or not airborne:
+                return "Trampa Arena del rival"
+        if ab == ABILITY_MAGNET_PULL and TYPE_STEEL in types:
+            return "Imán del rival"
+    for key in ("mean_look", "bind", "ingrain"):
+        if has_condition(raw, key):
+            return CONDITIONS[CONDITION_ID[key]][1]
+    return None
 
 
 def condition_value(status: str, turns=None) -> int:

@@ -133,6 +133,10 @@ class Rom:
     def move_pp(self) -> list[int]:
         return [raw[5] if len(raw) > 5 else 0 for raw in self.narc(MOVES)]   # byte 5 = PP base
 
+    def move_info(self) -> list[list[int]]:
+        """[tipo, categoría (0 estado, 1 físico, 2 especial), potencia] de cada movimiento (bytes 0, 2 y 3)."""
+        return [[raw[0], raw[2], raw[3]] if len(raw) > 3 else [0, 0, 0] for raw in self.narc(MOVES)]
+
     def text(self, index: int) -> list[str]:
         return decode_text(self.narc(TEXT)[index])
 
@@ -177,6 +181,7 @@ def build_data(rom: Rom) -> dict:
         "exp": EXP_TABLES,
         "species": species,
         "move_pp": rom.move_pp()[:560],
+        "move_info": rom.move_info()[:560],
         "abilities": rom.text(TEXT_ABILITIES)[:165],
         "moves": rom.text(TEXT_MOVES)[:560],
         "items": rom.text(TEXT_ITEMS)[:639],

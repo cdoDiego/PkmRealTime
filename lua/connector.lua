@@ -30,7 +30,8 @@ local ENCDATA_OFF, ENCDATA_SIZE = 0x38, 0xE8   -- tabla de encuentros de la zona
 local HEADER_OFF = 0x3FFE00           -- copia de la cabecera del cartucho en Main RAM
 local BATTLE_TABLE_PTR_OFF = 0x526A8  -- tabla de la copia "visual" de los combatientes (tracker: mainBattleDataPtr)
 local BATTLE_SERVER_PTR_OFF = 0x52790 -- tabla de la copia "real", la que decide el combate (volcado combate1)
-local BATTLER_SIZE = 0x140            -- bytes que se envían de cada combatiente (movimientos en +0x104)
+local BATTLER_SIZE = 0x160            -- bytes que se envían de cada combatiente (movimientos en +0x104, último
+                                      -- movimiento usado en +0x14A, banderas de estado en +0x155)
 
 -- Direcciones que cambian según el juego (código del cartucho). Solo se escribe en juegos de esta lista.
 --   battle: u16, 0x2100/0x2101 = en combate
@@ -179,6 +180,94 @@ local function game_mode(game, party_addr)
   return "map"
 end
 
+-- Registro del combate y pausa del rival (se revisa en cada frame, no solo en cada consulta).
+-- Adaptador (btl_adapter.c): +0x04 respuesta, +0x08 su tamaño, +0x0C respondido (bits 0-3), +0x0E estado (0 libre,
+-- 1 enviar, 3 esperando respuesta, 4 respondido), +0x10 comando (u16: 3 elegir acción, 5 cambio tras debilitarse,
+-- 6 cambio a mitad de turno, 8 bloque del turno), +0x12 tamaño, +0x14 datos.
+-- Bloques: el servidor manda a cada cliente lo que pasó (comandos SC_*); se copian del adaptador del jugador y se envían
+-- en la siguiente consulta con el turno en que llegaron (el turno sube cada vez que se pide elegir acción).
+-- Pausa: con el estado del adaptador del rival en 2 (que el juego no usa), BtlAdapter_WaitCmd devuelve FALSE y el
+-- servidor espera aunque los dos ya hayan elegido; nada más cambia (ni el menú ni la IA). Al soltarla vuelve a 3 y el
+-- turno sigue con lo que haya en la respuesta del rival (que el puente puede cambiar mientras tanto). El estado 4
+-- ("respondido") no significa leído: el servidor lo lee cuando todos respondieron y lo deja en 0 en el mismo frame.
+local HOLD_STATE = 2
+local SELECT_CMDS = { [3] = true, [5] = true, [6] = true }
+local MAX_BLOCKS = 40
+local frame_count = 0
+local watch = { turn = 0, last_cmd = -1, idle = true, last_sig = "", blocks = {}, lost = 0 }
+local hold = { enabled = false, max = 3600, active = false, since = 0, skip = false, adapter = nil }
+local hold_status = ""
+
+local function adapter_at(game, i)
+  local a = memory.read_u32_le(off(game.adapters + 4 * i), DOMAIN)
+  if a < BASE or a >= BASE + 0x400000 then return nil end
+  return a
+end
+
+local function hold_release(why)
+  local a = hold.adapter
+  if hold.active and a ~= nil and memory.read_u8(off(a + 0x0E), DOMAIN) == HOLD_STATE then
+    memory.write_u8(off(a + 0x0E), 3, DOMAIN)
+  end
+  hold.active, hold.adapter = false, nil
+  hold_status = why
+end
+
+local function battle_watch(game)
+  local bs = memory.read_u16_le(off(game.battle), DOMAIN)
+  if bs ~= 0x2100 and bs ~= 0x2101 then return end          -- al terminar el combate los adaptadores se liberan
+  local a0 = adapter_at(game, 0)
+  if a0 == nil then return end
+  local cmd = memory.read_u16_le(off(a0 + 0x10), DOMAIN)
+  local st = memory.read_u8(off(a0 + 0x0E), DOMAIN)
+  if cmd == 3 and watch.last_cmd ~= 3 then watch.turn = watch.turn + 1 end
+  if st == 0 or cmd ~= 8 then watch.idle = true end
+  if cmd == 8 and st ~= 0 then                -- con 0 el bloque ya se jugó (sigue ahí hasta el siguiente pedido)
+    local size = memory.read_u16_le(off(a0 + 0x12), DOMAIN)
+    if size > 0 and size <= 0xBBC then
+      local sig = size .. ":" .. read_hex(a0 + 0x14, math.min(size, 16))
+      if watch.idle or sig ~= watch.last_sig then
+        if #watch.blocks < MAX_BLOCKS then
+          watch.blocks[#watch.blocks + 1] = watch.turn .. ":" .. read_hex(a0 + 0x14, size)
+        else
+          watch.lost = watch.lost + 1
+        end
+        watch.last_sig, watch.idle = sig, false
+      end
+    end
+  end
+  watch.last_cmd = cmd
+  local a1 = adapter_at(game, 1)
+  if a1 == nil then return end
+  local cmd1 = memory.read_u16_le(off(a1 + 0x10), DOMAIN)
+  local st1 = memory.read_u8(off(a1 + 0x0E), DOMAIN)
+  if hold.active then
+    if a1 ~= hold.adapter or st1 ~= HOLD_STATE then
+      hold.active, hold.adapter = false, nil                  -- el juego la cambió (p. ej. terminó el combate)
+    elseif not hold.enabled then
+      hold_release("soltada (pausa desactivada)")
+    elseif frame_count - hold.since > hold.max then
+      hold_release("soltada: tiempo máximo")
+    end
+    return
+  end
+  if st1 == 0 or not SELECT_CMDS[cmd1] then hold.skip = false end
+  if hold.enabled and not hold.skip and SELECT_CMDS[cmd1] and (st1 == 1 or st1 == 3 or st1 == 4) then
+    memory.write_u8(off(a1 + 0x0E), HOLD_STATE, DOMAIN)
+    hold.active, hold.adapter, hold.since, hold.skip = true, a1, frame_count, true
+    hold_status = "esperando la decisión del rival"
+  end
+end
+
+-- Bloques capturados para la consulta: "<turno>:<hex>|<turno>:<hex>" (o "-"); se vacía al enviarlos
+local function blocks_field()
+  if #watch.blocks == 0 and watch.lost == 0 then return "-" end
+  local t = watch.blocks
+  if watch.lost > 0 then t[#t + 1] = "lost:" .. watch.lost end
+  watch.blocks, watch.lost = {}, 0
+  return table.concat(t, "|")
+end
+
 -- En combate: cada combatiente en sus dos copias (estructura de batalla y su Pokémon cifrado).
 -- Formato: "T:<tabla>,p0:<dir>:<estructura>:<pk5>,e0:...". Minúscula = copia visual; mayúscula = copia real.
 -- La tabla tiene 4 clientes de 0x1C bytes (6 punteros + contador): p = jugador, e = rival, a = compañero del jugador
@@ -200,6 +289,23 @@ local function battle_hex(ptr_abs, game)
     end
   end
   if game.battle_field then parts[#parts + 1] = "W:" .. read_hex(game.battle_field, 8) end   -- clima, turnos
+  if game.adapters and check_sig(game, "inject") ~= false then
+    -- Adaptadores (lo que el servidor pide a cada cliente y lo que este respondió):
+    -- "Q<i>:<dir>:<+0x0C..+0x13>:<dir. respuesta>:<respuesta>:<datos del pedido (8 bytes)>"
+    for i = 0, 3 do
+      local a = memory.read_u32_le(off(game.adapters + 4 * i), DOMAIN)
+      if a >= BASE and a < BASE + 0x400000 then
+        local rp, rs = memory.read_u32_le(off(a + 4), DOMAIN), memory.read_u32_le(off(a + 8), DOMAIN)
+        local ret = "-"
+        if rp >= BASE and rp < BASE + 0x400000 and rs > 0 and rs <= 32 then ret = read_hex(rp, rs) end
+        parts[#parts + 1] = string.format("Q%d:%08x:%s:%08x:%s:%s", i, a, read_hex(a + 0x0C, 8), rp, ret,
+                                          read_hex(a + 0x14, 8))
+      end
+    end
+    parts[#parts + 1] = string.format("H:%d:%d:%d", hold.active and 1 or 0,
+                                      hold.active and (frame_count - hold.since) or 0, hold.enabled and 1 or 0)
+    parts[#parts + 1] = "N:" .. watch.turn
+  end
   return table.concat(parts, ",")
 end
 
@@ -545,6 +651,23 @@ local function run(cmd)
     local cur = read_hex(addr, #b / 2)
     local state = cur == c and "aplicado" or "pendiente (se aplica al volver al mapa)"
     return true, "P " .. a .. " " .. (b == c and "quitado" or state)
+  elseif op == "H" then                         -- pausa del rival: H 1 <frames máx.> | H 0
+    local game = GAMES[game_id()]
+    if game == nil or game.adapters == nil then return false, "H: faltan direcciones para este juego" end
+    local okc, errc = require_sig(game, "inject", "H")
+    if not okc then return false, errc end
+    hold.enabled = a == "1"
+    if hold.enabled then
+      local m = tonumber(b)
+      hold.max = (m ~= nil and m >= 60 and m <= 36000) and m or 3600
+    elseif hold.active then
+      hold_release("soltada (pausa desactivada)")
+    end
+    return true, "H " .. (hold.enabled and ("activa, máx. " .. hold.max .. " frames") or "desactivada")
+  elseif op == "HR" then                        -- soltar la pausa actual
+    if not hold.active then return true, "HR sin pausa" end
+    hold_release(a ~= "" and ("soltada: " .. a) or "soltada")
+    return true, "HR soltada"
   elseif op == "R" then                         -- leer (herramienta de investigación)
     local len = tonumber(b)
     if len == nil or len < 1 or len > 0x400 then return false, "R: longitud inválida" end
@@ -582,19 +705,28 @@ local function handle(reply)
   comm.socketServerSend("RES " .. (ok_all and "ok" or "fail") .. " " .. table.concat(details, ","))
 end
 
-event.onexit(function() faint_unhook(); script_unhook(); restore_patches() end)
+event.onexit(function() hold_release("script cerrado"); faint_unhook(); script_unhook(); restore_patches() end)
 comm.socketServerSetTimeout(50)
 console.log("connector.lua listo; conectado: " .. tostring(comm.socketServerIsConnected()))
 
-local frame = 0
+local last_mode = "unknown"
 while true do
-  frame = frame + 1
-  if frame % POLL_EVERY == 0 then
+  frame_count = frame_count + 1
+  if current_mode == "battle" then
+    local g = GAMES[game_id()]
+    if g ~= nil and g.adapters ~= nil and check_sig(g, "inject") ~= false then battle_watch(g) end
+  end
+  if frame_count % POLL_EVERY == 0 then
     local code, crc = game_id()
     local game = GAMES[code]
     local addr, n = party_location()
     local mode = game_mode(game, addr)
     current_mode = mode
+    if mode == "battle" and last_mode ~= "battle" then   -- combate nuevo: turnos desde 0
+      watch.turn, watch.last_cmd, watch.idle, watch.last_sig = 0, -1, true, ""
+    end
+    if mode ~= "battle" and hold.active then hold.active, hold.adapter = false, nil end
+    last_mode = mode
     local party, bag, box, trainer, battle, misc, loc = "-", "-", "-", "-", "-", "-", "-"
     if addr ~= nil and mode ~= "battle" then
       local ptr = addr - PARTY_PTR_OFF
@@ -624,8 +756,8 @@ while true do
     if script_hooks and pending_script == nil then script_unhook() end
     maintain_patches()
     local cf = compat_field(game)
-    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s %s", mode, addr or 0, party, bag, box, trainer,
-                                        code:gsub("[^%w]", "_"), crc, battle, misc, cf, loc))
+    comm.socketServerSend(string.format("POLL %s 0x%08x %s %s %s %s %s:%04x %s %s %s %s %s", mode, addr or 0, party, bag, box,
+                                        trainer, code:gsub("[^%w]", "_"), crc, battle, misc, cf, loc, blocks_field()))
     handle(comm.socketServerResponse())
     gui.text(4, 4, "puente: " .. mode)
     if game == nil then gui.text(4, 20, "juego no soportado: " .. code .. " (no se escribe nada)") end
@@ -643,5 +775,10 @@ while true do
   if inject_status ~= "" then gui.text(4, 36, "inyección: " .. inject_status) end
   if faint_status ~= "" then gui.text(4, 52, "debilitar: " .. faint_status) end
   if script_status ~= "" then gui.text(4, 68, "guion: " .. script_status) end
+  if hold.active then
+    gui.text(4, 100, string.format("pausa del rival: %s (%d s)", hold_status, math.floor((frame_count - hold.since) / 60)))
+  elseif hold_status ~= "" and current_mode == "battle" then
+    gui.text(4, 100, "pausa del rival: " .. hold_status)
+  end
   emu.frameadvance()
 end

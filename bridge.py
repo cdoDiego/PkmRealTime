@@ -5,7 +5,8 @@ Ejecutar:  pip install fastapi uvicorn websockets
 
 Protocolo con Lua (texto, una petición por mensaje):
   Lua -> Python:  "POLL <modo> <dir. equipo 0x...> <hex equipo|-> <hex mochila|-> <hex caja 1|-> <hex jugador|-> <código:crc> <combate|->
-                   <hex dinero|-> <compatibilidad: faint=1,inject=?,...|-> <zona:estación:dir. encuentros:hex encuentros|->"
+                   <hex dinero|-> <compatibilidad: faint=1,inject=?,...|-> <zona:estación:dir. encuentros:hex encuentros|->
+                   <bloques del combate: turno:hex|...|->"
                   (compatibilidad: 1 = código esperado, 0 = distinto, ? = sin ver; sin tabla de encuentros: "-" en sus campos)
   Python -> Lua:  comandos separados por ";"  (vacío = nada que hacer)
      W <addr> <hex>              escribe bytes
@@ -35,6 +36,7 @@ import bag
 import boxes
 import battle
 import battle_cmd
+import battle_log
 import config
 import effects
 import encounters
@@ -45,6 +47,7 @@ import happenings
 import pc
 import roulette
 import pk5
+import rival
 import wondercard
 
 # ---------------------------------------------------------------- modelos
@@ -52,7 +55,7 @@ When = Literal["en_mapa", "en_combate", "cualquiera"]
 WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"map", "battle"},
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
 BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather",
-                 "battle_set_item"}   # siempre esperan al combate
+                 "battle_set_item", "rival_action"}   # siempre esperan al combate
 FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_egg"}   # esperan al mapa (personaje libre)
 
 
@@ -63,7 +66,7 @@ class EventIn(BaseModel):
                   "give_pokemon", "give_egg", "move_pokemon", "remove_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season", "set_shiny_odds",
                   "start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_wonder_card",
-                  "debug_peek", "debug_poke", "debug_inject", "rollback"]
+                  "rival_action", "rival_control", "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo; {"box": 2, "slot": 0} = caja
     hp: Optional[int] = None
@@ -109,6 +112,10 @@ class EventIn(BaseModel):
     title: Optional[str] = None      # give_wonder_card: título de la tarjeta (máx. 36 letras)
     ot: Optional[str] = None         # give_wonder_card: entrenador original del Pokémon (máx. 7 letras; por defecto "Regalo")
     card_id: Optional[int] = None    # give_wonder_card: ID de la tarjeta (0-2047; por defecto uno libre de 1500-2045)
+    action: Optional[str] = None     # rival_action: "move" (con move_slot) o "switch" (con to_slot: hueco del equipo rival)
+    keep_paused: bool = False        # rival_action: no soltar la pausa del turno después de cambiar la elección
+    mode: Optional[str] = None       # rival_control: "pause" (esperar la decisión en cada elección del rival) u "off"
+    seconds: Optional[int] = None    # rival_control: máximo de espera por elección (por defecto 30; 0 = 10 min)
 
 
 @dataclass
@@ -127,6 +134,7 @@ queue: list[int] = []
 album_jobs: dict = {}     # give_wonder_card: id del evento -> {"card", "block" (álbum leído), "custom", "slot"}
 pending_eggs: list = []   # give_egg con hatch_cycles: especie, ciclos y huevos de esa especie que ya había
 persistent_weather: Optional[str] = None   # clima que se repone al volver de cada combate (set_weather con persist)
+rival_pause: Optional[int] = None          # rival_control "pause": segundos máximos de espera (se reenvía al reconectar)
 game = {"mode": "unknown", "game": None, "data_ok": False, "party_addr": 0, "party": [], "bag": {}, "box1": [], "battle": None,
         "money": None, "badges": None, "compat": {},
         "location": None, "encounters": None, "boxes": [], "box_current": None,
@@ -225,6 +233,16 @@ def build_commands(ev: Event) -> str:
         return f"SAVE;W {addr:#x} {data}"
     if d["type"] == "give_wonder_card":
         return wonder_card_commands(ev)
+    if d["type"] == "rival_control":
+        return rival_control_command(d)
+    if d["type"] == "rival_action":
+        if game["mode"] != "battle" or not game["battle"] or "adapters" not in game["battle"]:
+            raise ValueError("no hay combate en curso (o este juego no tiene las direcciones del combate)")
+        require_compat("inject")
+        cmds = rival.action_commands(game["battle"], d)
+        if (game["battle"].get("hold") or {}).get("active") and not d.get("keep_paused"):
+            cmds += ";HR"    # decidido: el turno sigue
+        return "SAVE;" + cmds
     if d["type"] in FIELD_SCRIPT_EVENTS:   # guiones propios: el juego los ejecuta con el personaje libre en el mapa
         if game["mode"] == "battle":
             raise ValueError("no se puede durante un combate")
@@ -503,7 +521,29 @@ def need(d: dict, key: str):
     return d[key]
 
 
+RIVAL_PAUSE_DEFAULT = 30
+
+
+def rival_control_command(d: dict) -> str:
+    """Pausa del rival: con "pause", en cada elección del rival (acción, cambio) el turno espera hasta que llegue un
+    rival_action o pasen `seconds`; luego sigue con lo que haya elegido (la IA, si nadie lo cambió)."""
+    global rival_pause
+    mode = str(need(d, "mode"))
+    if mode == "off":
+        rival_pause = None
+        return "H 0"
+    if mode != "pause":
+        raise ValueError("mode debe ser 'pause' u 'off'")
+    seconds = RIVAL_PAUSE_DEFAULT if d.get("seconds") is None else int(d["seconds"])
+    if not 0 <= seconds <= 600:
+        raise ValueError("seconds va de 0 a 600 (0 = el máximo, 10 minutos)")
+    rival_pause = seconds
+    return f"H 1 {(seconds or 600) * 60}"
+
+
 def battle_ready(d: dict) -> bool:
+    if d["type"] == "rival_action":
+        return rival.ready(game["battle"], d)
     if d["type"] == "battle_set_weather":
         return True
     side = d["target"].get("side", "enemy")
@@ -517,7 +557,7 @@ def next_commands() -> str:
     for eid in list(queue):
         ev = events[eid]
         when = "en_combate" if ev.data["type"] in BATTLE_EVENTS else ev.data["when"]
-        if ev.data["type"] in ("debug_peek", "debug_poke", "debug_inject"):
+        if ev.data["type"] in ("debug_peek", "debug_poke", "debug_inject", "rival_control"):
             when = "cualquiera_incluso_menu"
         if game["mode"] not in WHEN_TO_MODES[when] and ev.data["type"] != "rollback":
             continue
@@ -600,7 +640,7 @@ def prepare_data() -> None:
     import rom
     r = rom.Rom(path)
     info = gamedata.rom_info()
-    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "zones" in gamedata.DATA:
+    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "move_info" in gamedata.DATA:
         print(f"Datos del juego: {r.title} {r.code} (al día)")
         return
     print(f"Generando datos del juego desde {r.title} {r.code}...")
@@ -787,6 +827,21 @@ def season_command(season: str) -> str:
     return f"SAVE;W {force:#x} 01;W {addr:#x} {value:02x}"
 
 
+async def update_battle_log(mode: str, blockfield: str) -> None:
+    """Registro del combate y estado del rival, con cada POLL."""
+    b = game["battle"] if mode == "battle" and game["battle"] and "error" not in game["battle"] else None
+    if mode == "battle" and game["mode"] != "battle":
+        battle_log.start()
+    if b is not None:
+        b["rival"] = rival.status(b)
+    try:
+        blocks = battle_log.parse_blocks(blockfield)
+    except ValueError:
+        blocks = []
+    if battle_log.feed(b, blocks):
+        await broadcast({"kind": "battle_log", "log": battle_log.export(battle_log.current)})
+
+
 def update_bag(hexdata: str) -> None:
     global bag_raw
     raw = bytes.fromhex(hexdata) if hexdata not in ("", "-") else b""
@@ -799,6 +854,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
     global in_flight, last_snap
     game["connected"] = True
     print("Lua conectado")
+    if rival_pause is not None:   # ni la pausa del rival
+        add_event(EventIn(type="rival_control", mode="pause", seconds=rival_pause, when="cualquiera"), "pausa (reconexión)")
     if shiny_odds is not None:   # el Lua nuevo no recuerda el parche: se vuelve a mandar
         add_event(EventIn(type="set_shiny_odds", odds=shiny_odds, when="cualquiera"), "variocolor (reconexión)")
     try:
@@ -807,7 +864,8 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             if kind == "POLL":
                 mode, _, rest = rest.partition(" ")
                 addr, _, rest = rest.partition(" ")
-                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc, compatfield, locfield = (rest.split(" ") + ["-"] * 9)[:9]
+                hexparty, hexbag, hexbox, hextrainer, gamefield, battlefield, hexmisc, compatfield, locfield, blockfield = \
+                    (rest.split(" ") + ["-"] * 10)[:10]
                 update_game(gamefield)
                 game["compat"] = parse_compat(compatfield)
                 if mode != "battle":
@@ -818,6 +876,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                     game["battle"] = {"error": str(e)}
                 if game["mode"] == "battle" and mode != "battle" and persistent_weather:   # el mapa vuelve con su clima
                     add_event(EventIn(type="set_weather", weather=persistent_weather), "clima persistente")
+                await update_battle_log(mode, blockfield)
                 game["mode"], game["updated"] = mode, time.time()
                 game["party_addr"] = int(addr, 16) if addr else 0   # el puntero puede moverse
                 update_bag(hexbag)     # también en combate: la mochila del combate es la misma
@@ -829,7 +888,7 @@ async def handle_lua(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
                 for h in record_happenings(mode):
                     await broadcast({"kind": "happening", "happening": h})
                 # BizHawk 2.6.2+ solo lee respuestas "<longitud> <mensaje>"; sin eso se bloquea esperando
-                payload = next_commands().encode()
+                payload = (next_commands() or rival.auto_release(game["battle"])).encode()
                 writer.write(str(len(payload)).encode() + b" " + payload)
                 await writer.drain()
                 await broadcast({"kind": "state", "state": game})
@@ -925,6 +984,14 @@ async def get_event(eid: int, x_token: Optional[str] = Header(None)):
 async def get_state(x_token: Optional[str] = Header(None)):
     auth(x_token)
     return game
+
+
+@app.get("/battle/log")
+async def get_battle_log(x_token: Optional[str] = Header(None)):
+    """Registro de turnos del combate actual (o del último) y de los anteriores (hasta 3)."""
+    auth(x_token)
+    logs = [battle_log.export(b) for b in battle_log.battles]
+    return {"current": logs[-1] if logs else None, "previous": logs[:-1]}
 
 
 # ---------------------------------------------------------------- ruleta

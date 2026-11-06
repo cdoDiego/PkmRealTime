@@ -12,7 +12,10 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── pk5.py                 Cifrado PK5 y cambios en Pokémon (HP, estado, curar, objeto, movimientos)
 ├── bag.py                 Mochila: bolsillos, dar y quitar objetos
 ├── gift.py                Crear Pokémon nuevos (regalos); exporta .pk5 para PKHeX
-├── battle.py              Estructura de combate (fase 5): lectura y escrituras
+├── battle.py              Estructura de combate (fase 5): lectura y escrituras; condiciones, atrapado, ataque encadenado
+├── battle_cmd.py          Comandos del servidor del combate: codificar (inyección) y leer bloques (registro)
+├── battle_log.py          Registro del combate: qué pasó en cada turno y lo que el rival ha revelado
+├── rival.py               Control del rival: ver y cambiar lo que eligió la IA, pausa del turno
 ├── encounters.py          Zona actual y tabla de encuentros salvajes de la zona
 ├── happenings.py          Avisos de lo que pasa en el juego (capturas, debilitados, medallas, zona...)
 ├── boxes.py               Cajas del PC: nombres, caja abierta, Pokémon de cada caja
@@ -286,6 +289,77 @@ de elegir acción. showdown-bw2 muestra que se puede: pausar la lógica (`server
 la elección real. Es factible pero frágil (el menú se cierra y reabre, y pausar/reanudar la lógica puede trabar el combate).
 Decisión (27-oct): no por ahora; alternativa barata si hiciera falta, un aviso dibujado por el Lua mientras el evento espera.
 
+### Control del rival, pausa y registro de turnos (04-nov, experimental)
+
+Fuente: decompilación pokebw2 (`src/ov167/btl_client.c`, `btl_server.c`, `btl_adapter.c`, `btl_server_cmd.c`,
+`include/battle/btl_action.h`, `btl_pokeparam.h`). Direcciones W2 de `config/w2_us/arm9/overlays/ov167/symbols.txt`.
+
+**Cómo decide el rival.** El servidor pide a cada cliente, por su adaptador, "elegir acción" (comando `3`), "cambio tras
+debilitarse" (`5`) o "cambio a mitad de turno" (`6`, Ida y Vuelta, Voltiocambio...). La IA responde en 2-3 frames
+(`AISelectAction`, `AISelectChangePoke`) y su respuesta (un `BattleAction` u32 por posición) queda en RAM, apuntada por el
+adaptador (`+0x04`, tamaño en `+0x08`). El servidor la copia **sin revisarla** (`BattleServer_StoreClientActions`) cuando
+todos han respondido (`BattleServer_AllClientsReplied`); los tres pedidos pasan por ahí, también el aviso del estilo
+"Cambio" ("va a sacar a X"), que se lee después. Validado en `combate2.bin`: rival con `0x501` (Arañazo contra la posición 0)
+mientras el jugador seguía en el menú.
+
+| `BattleAction` (u32) | Bits |
+| --- | --- |
+| Tipo | 0-3: 0 nada, 1 atacar, 2 objeto, 3 cambiar, 4 huir, 7 sin acción (recarga) |
+| Atacar | 4-6 posición del objetivo (individual: 0 = jugador), 7-22 movimiento |
+| Cambiar | 4-6 posición, 7-9 hueco del equipo (orden del combate: 0 = el que está en el campo), 10 "no queda nadie" |
+
+**Estado del adaptador** (`+0x0E`): 0 libre, 1 enviar, 3 esperando respuesta, 4 respondido. El 4 no significa leído: el
+servidor la lee cuando todos respondieron y lo deja en 0 en el mismo frame. Con 1-4 la respuesta aún se puede cambiar
+(`rival_action` escribe con `G`, con guarda en la respuesta y en ese byte).
+
+**Pausa (sin parches de código).** Con el estado del adaptador del rival en **2** (valor que el juego no usa),
+`BtlAdapter_WaitCmd` devuelve FALSE y el servidor espera aunque los dos ya hayan elegido. El menú y la IA no se tocan. El Lua lo
+hace en cada frame en cuanto llega un pedido 3/5/6 (orden `H 1 <frames>`), y lo suelta (vuelve a 3) con `HR`, al pasar el
+tiempo máximo, al desactivarla o al cerrar el script. El puente la suelta sola si el rival no tiene nada que decidir (p. ej.
+solo se debilitó el tuyo) y tras aplicar un `rival_action` (salvo `keep_paused`). En pantalla: "pausa del rival: ...".
+
+**Bloquear los botones del jugador** (investigado, no implementado): `joypad.set` de BizHawk no deja claro si `false` anula la
+entrada del usuario, y en DS el menú del combate también se usa con la pantalla táctil. La pausa del servidor cubre la necesidad
+(el jugador puede elegir, pero el turno no avanza hasta la decisión), así que no hace falta.
+
+**Comprobaciones** (las que el juego hace solo en el cliente, `btl_client.c`): no cambia si está atrapado (`IsMonTrapped`:
+Sombra Trampa, Trampa Arena con sus excepciones de volador/Levitación/Globo/Levitón/Telequinesis y Bola Férrea/Derribo/Arraigo,
+Imán con tipo acero; condiciones Mal de Ojo/Bloqueo, Atadura y similares, Arraigo; Muda Concha lo libra), ni hacia un
+debilitado, el que está en el campo o uno que ya va a entrar. No se elige nada si el turno lo decide el juego
+(`AutoSelectAction`: ataque encadenado, cargando, bandera 12 = recarga). Movimiento: con PP, y no bloqueado por Objeto elección,
+Otra vez, Mofa (movimientos de estado, con la categoría de la ROM), Tormento o Anulación. No se ven la Gravedad ni Cerca (efectos
+del campo): ahí el juego hace fallar el movimiento al usarlo.
+
+**Más de la estructura del combatiente** (`BattleMon`, validado en los volcados): `+0xF8` tipos, `+0x13C` habilidad activa,
+`+0x146` turnos en el campo, `+0x14A` último movimiento, `+0x152` último objetivo, `+0x155` banderas de estado (2 bytes).
+Condiciones `+0x1C` (36 × u32): bits 0-2 tipo, 3-8 turnos, y un dato (movimiento de Otra vez, Anulación, Objeto elección o
+ataque encadenado) en los bits 9-24 (15-30 en el tipo 4). `/state` las muestra en `volatile` y `locked`. El Lua envía ahora
+`0x160` bytes por combatiente.
+
+**Registro de turnos.** Cada vez que el servidor manda el bloque del turno al jugador (comando `8`), el Lua lo copia del
+adaptador (en cada frame, no solo en cada consulta) con el número de turno (sube con cada "elegir acción") y lo envía en la
+siguiente consulta (último campo del `POLL`). `battle_cmd.decode` lo lee como el juego (`BtlServerCmdQueue_Read`, tabla de
+formatos de la decomp, saltando los huecos `RESERVE`), y `battle_log.py` lo convierte en eventos: movimiento usado, daño (y %),
+golpe crítico, curas, debilitado, entra/retira, estados y condiciones, cambios de estadísticas, habilidad activada, objeto usado
+o gastado, Ilusión rota, clima, sustituto, transformación, experiencia, Poké Ball. Al empezar cada turno guarda una foto de los que
+están en el campo (vida, PP, estado, cambios, condiciones, atrapado, encadenado). `revealed` junta lo que el rival ha mostrado
+(movimientos usados, habilidad, objeto), útil para un overlay sin trampas.
+
+**Causa de cada cambio de vida** (`cause` en el evento y al final del texto): el comando de la vida no la dice, pero el juego
+la marca justo antes (`btl_server_flow.c`): animación con su número (`0x257` veneno, `0x258` quemadura, `0x273` maldición,
+`0x274` pesadilla, `0x290` clima; último argumento de `SC_EFFECT*`), mensaje del clima (`0x18C` arena, `0x18F` granizo),
+`USE_HELD_ITEM` u `OP_CONSUME_ITEM` (objeto: Restos, Casco Dentado, bayas), la ventana de la habilidad (`ABILITY_POPUP_IN`…`OUT`:
+Piel Tosca, Cura Lluvia), el movimiento en curso (`MOVE_MSG`: daño al objetivo o retroceso al atacante), la entrada al campo
+(trampas) y el final del turno (`ServerControl_TurnCheck` empieza con `HIDE_MSG_WINDOW`). Lo que no tiene marca propia
+(Drenadoras, Atadura) sale como "al final del turno". Cada daño o cura lleva además `hp`/`max_hp` tras el golpe: la copia real
+ya tiene la vida del final del bloque (el servidor calcula el turno entero antes de mandarlo) y se calcula hacia atrás.
+Cada turno guarda sus bloques en crudo (`blocks`), para rehacer el registro más adelante.
+
+**Siguiente fase (pendiente):** registro estilo Pokémon Showdown (`|move|`, `|-damage|… [from] item: Leftovers`, `|switch|`,
+`|-supereffective|`, `|turn|`…) en la parte visual. Los eventos ya tienen lo necesario (quién, qué, causa, vida y % tras cada
+golpe, turno). Los textos de los mensajes del juego (`MSG_*`) no se
+traducen todavía, solo se cuentan. Se guardan los 3 últimos combates.
+
 ### Objeto en combate
 
 **Problema:** el objeto de un combatiente está en `+0x12` (`heldItem`; `+0x14` es el objeto ya consumido), pero cambiarlo ahí no
@@ -483,7 +557,7 @@ Si el puente responde sin la longitud, BizHawk se queda esperando en cada consul
 
 | Dirección | Mensaje |
 | --- | --- |
-| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <cajas> <hex jugador> <código:crc> <combate> <hex misc> <compat> <zona:estación:dir. encuentros:hex encuentros>` (`cajas` = `<hex bloque 0>|<caja abierta>:<hex>|<otra caja>:<hex>`: la abierta en cada lectura y las demás por turnos, así todas se releen en ~1,3 s; equipo, mochila, cajas, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6; la zona va como `-` en combate y la tabla de encuentros como `-` si no hay) |
+| Lua → Python | `POLL <modo> <dir. equipo 0x...> <hex equipo> <hex mochila> <cajas> <hex jugador> <código:crc> <combate> <hex misc> <compat> <zona:estación:dir. encuentros:hex encuentros> <bloques>` (`bloques` = bloques del turno que llegaron desde la consulta anterior, `<turno>:<hex>|...`, o `-`; en `combate` van además `Q<i>` (adaptadores), `H` (pausa) y `N` (turno); `cajas` = `<hex bloque 0>|<caja abierta>:<hex>|<otra caja>:<hex>`: la abierta en cada lectura y las demás por turnos, así todas se releen en ~1,3 s; equipo, mochila, cajas, jugador y misc van como `-` en combate; combate va como `-` fuera de él; `compat` = `faint=1,inject=?,...`, ver sección 6; la zona va como `-` en combate y la tabla de encuentros como `-` si no hay) |
 | Python → Lua | comandos separados por `;` (vacío = nada que hacer) |
 | | `W <dir> <hex>` escribe bytes |
 | | `G <dir> <hex_esperado> <hex_nuevo>` escribe solo si la memoria coincide |
@@ -686,6 +760,7 @@ Al crear un evento se guarda su `id` en la variable `eventId`, así que "Ver úl
 | `GET` | `/events/{id}` | Estado de un evento: `pendiente`, `enviado`, `aplicado`, `fallo` o `cancelado` |
 | `DELETE` | `/events/{id}` | Cancela un evento `pendiente` |
 | `POST` | `/rollback` | Carga el savestate de la ranura 9 (estado anterior al último evento) |
+| `GET` | `/battle/log` | Registro de turnos del combate actual (`current`) y de los 2 anteriores (`previous`). También llega por el WebSocket como `{"kind": "battle_log", "log": ...}` cuando cambia |
 | `GET` | `/happenings?since=N` | Avisos de lo que pasó en el juego con `id` mayor que `N` (los últimos 500; ver abajo) |
 | `GET` | `/overlay/` | Página de configuración del overlay de OBS (sin token; ver sección 7b) |
 | `GET` | `/roulette` | Ruleta: catálogo de efectos, premios guardados, tirada en curso (`spinning`), cola (`queued`) y últimas 10 tiradas (`last`) |
@@ -774,6 +849,16 @@ Eventos disponibles:
 - `battle_set_pp` (experimental): PP de un movimiento (`move_slot` 0–3); sin `pp`, al máximo. Escribe también la copia de respaldo.
   Los PP sí se ven al momento en el menú de Luchar. Si el rival ya había elegido ese movimiento para el turno, lo intenta
   igual y sale el mensaje de que no le quedan PP (sin efecto), como en el juego normal.
+- `rival_control` (experimental): `"mode": "pause"` hace que, en cada elección del rival (acción o cambio), el turno espere
+  hasta que llegue un `rival_action` o pasen `seconds` (por defecto 30; 0 = 10 minutos); luego sigue con lo que eligió la IA.
+  `"mode": "off"` la quita. Sirve en cualquier modo y se mantiene entre combates (también en los salvajes: hay que quitarla).
+- `rival_action` (experimental): cambia lo que eligió el rival antes de que se ejecute. `"action": "switch"` con `to_slot` (hueco
+  de su equipo en el orden del combate: el 0 es el que está en el campo) o `"action": "move"` con `move_slot` (0-3).
+  `target.slot` = qué rival (0; en dobles 1; 6 = segundo entrenador). Espera a que la IA haya elegido; un cambio pedido cuando le
+  toca sacar a alguien tras debilitarse se aplica ahí, y el ataque espera a la próxima vez que elija acción. Falla con el motivo si
+  no se puede (atrapado, encadenado, sin PP, Otra vez, Mofa...). Con la pausa activa la suelta al aplicarse (salvo
+  `"keep_paused": true`). `/state` muestra en `battle.rival` qué pide el servidor, si el jugador y el rival ya eligieron, qué eligió
+  el rival y si está en pausa (¡no lo enseñes en el overlay del jugador!).
 - `battle_set_weather` (experimental): clima del combate (`none`, `sun`, `rain`, `sandstorm`, `hail`), con `turns` opcional
   (sin `turns` no se acaba). Se anima con el mensaje del juego al reproducirse el turno; con `none` sale el de fin del clima.
   `/state` lo muestra en `battle.weather`.
@@ -949,6 +1034,8 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 04-nov | Probado en vivo: registro correcto en dos combates (daño, PP, Restos, Tóxico, cambios, experiencia) y cambio del rival. Arreglos: `DAMAGE_PLURAL` lleva detrás los pokeID golpeados (el lector se perdía), bloques repetidos (se copiaban con el adaptador libre), Tóxico = "envenenamiento grave". Nuevo: eficacia, críticos, "no afecta", causa de cada cambio de vida y la vida tras cada golpe. |
+| 04-nov | Control del rival (`rival.py`, `rival_action`), pausa del turno sin parches de código (estado 2 del adaptador, órdenes `H`/`HR` del Lua, `rival_control`) y registro de turnos (`battle_log.py`, `battle_cmd.decode`, `GET /battle/log`). Todo sale de la decomp y se comprobó con los volcados y pruebas; falta probarlo en el juego. `rom.py` añade tipo, categoría y potencia de los movimientos (`move_info`; el puente regenera `gen5_data.json`). |
 | 03-nov | Regalo Misterioso: álbum en puntero + `0x1D120`, cifrado en RAM; `wondercard.py` (formato PGF y cifrado), `tools/wonder_card.py`, evento `give_wonder_card` (lee y luego escribe con guardas) y premio de ruleta "Regalo misterioso". El repartidor aparece al cargar el mapa del Centro si hay tarjetas sin entregar (guion `global_10395`, comando `MysteryGifts`). Validado: Genesect oficial, Pikachu variocolor propio y Caramelo Raro entregados por el repartidor; se conservan al guardar y reiniciar. |
 
 ---
@@ -1055,6 +1142,18 @@ Notas:
 - [x] Guardar y reiniciar: se conserva lo recibido y las tarjetas quedan entregadas.
 - [ ] `give_wonder_card` por el puente y el premio de la ruleta (probado solo con un Lua simulado).
 - [ ] Álbum lleno: la 13.ª tarjeta reemplaza a una ya entregada.
+
+### Control del rival y registro (en el juego)
+- [x] `GET /battle/log` en un combate contra entrenador: turnos, daño, cambios y la foto de cada turno coinciden con lo visto.
+- [x] `rival_action` switch durante el turno: el rival cambió de Lillipup a Patrat en el turno 1.
+- [ ] Causas en vivo: veneno, Restos, retroceso, clima (arena/granizo), habilidad (Piel Tosca), golpe crítico, muy eficaz.
+- [ ] `rival_action` move: el rival usa el movimiento pedido (en un turno normal, con el jugador aún en el menú).
+- [ ] Cambio tras debilitarse: sale el Pokémon pedido (también con el estilo "Cambio", que avisa de quién sale).
+- [ ] `rival_control` pause: tras elegir, el turno espera; con `rival_action` sigue enseguida; sin él, a los `seconds`.
+- [ ] Pausa con tu Pokémon debilitado (el rival no elige nada): se suelta sola.
+- [ ] Combate doble: `target.slot` 1 y el cambio de cada posición.
+- [ ] Atrapado (Mal de Ojo, Sombra Trampa) y encadenado (Enfado, Hiperrayo): `rival_action` falla con el motivo.
+- [ ] Cerrar el script de Lua con la pausa activa: el combate sigue.
 
 ### Combates forzados y clima (en el juego)
 - [x] `start_wild_battle` fuera de la hierba (dentro de un pueblo): transición, Pikachu salvaje nivel 10 y vuelta normal al mapa.
