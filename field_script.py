@@ -75,7 +75,7 @@ def _after_battle(is_victory: int, lose: int, end: int) -> str:
 def wild_battle(species: int, level: int, form: int = 0, shiny=None, hidden_ability: bool = False, gender=None,
                 no_flee: bool = False) -> str:
     """shiny: True = variocolor, False = nunca, None = como siempre (al azar)."""
-    max_species = len(gamedata.DATA.get("species", {})) or 649
+    max_species = gamedata.max_species()
     if not 1 <= species <= max_species:
         raise ValueError(f"especie fuera de rango: {species} (1-{max_species})")
     if not 1 <= level <= 100:
@@ -134,7 +134,7 @@ def field_weather(weather) -> str:
 def give_pokemon(species: int, level: int, form: int = 0, hidden_ability: bool = False, gender=None, item: int = 0,
                  ball: int = 4, shiny: bool = False) -> str:
     """Al equipo con la orden del juego (lo crea el juego: entrenador, lugar, Pokédex); si está lleno, a una caja."""
-    max_species = len(gamedata.DATA.get("species", {})) or 649
+    max_species = gamedata.max_species()
     if not 1 <= species <= max_species:
         raise ValueError(f"especie fuera de rango: {species} (1-{max_species})")
     if not 1 <= level <= 100:
@@ -177,7 +177,7 @@ def trainer_info(trainer: int) -> dict:
 def give_egg(species: int, form: int = 0) -> str:
     """Huevo al equipo con la orden del juego: tu nombre de entrenador, los ciclos normales para eclosionar y el origen
     de un huevo. Si el equipo está lleno, el juego no lo crea (no hay versión para la caja)."""
-    max_species = len(gamedata.DATA.get("species", {})) or 649
+    max_species = gamedata.max_species()
     if not 1 <= species <= max_species:
         raise ValueError(f"especie fuera de rango: {species} (1-{max_species})")
     if not 0 <= form < 32:

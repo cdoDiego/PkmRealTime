@@ -14,11 +14,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # módulos de la raíz
 import config
+import gamedata
+import move_pp
 import pk5
 
 BASE = config.MAIN_RAM_BASE
-MAX_SPECIES = 649   # Gen 5
-MAX_MOVE = 559
+MAX_SPECIES = gamedata.max_species()   # 649 en el original; más en una ROM ampliada
+MAX_MOVE = move_pp.max_move()           # 559 en el original
 
 
 def load(path: str) -> bytes:

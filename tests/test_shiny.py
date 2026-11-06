@@ -9,7 +9,7 @@ eff = lambda b: (b[0] if b[-2:] == bytes.fromhex("0026") else b[0] * ((1 << (int
 for odds in (4000, 1000, 100, 32, 10, 2):
     b = bytes.fromhex(bridge.shiny_patch_bytes(orig, bridge.shiny_rolls(odds)))
     assert len(b) == len(bytes.fromhex(orig)) and b[1:-2] == bytes.fromhex(orig)[1:-2]   # solo cambian los extremos
-    p = 1 - (1 - 1 / 8192) ** eff(b)
+    p = 1 - (1 - 1 / bridge.shiny_base()) ** eff(b)
     assert abs(1 / p - odds) / odds < 0.12, (odds, 1 / p)
     sh = int.from_bytes(b[-2:], "little")
     assert b[-2:] == bytes.fromhex("0026") or (sh & 0xF83F) == 0                            # lsls r0, r0, #s
@@ -38,3 +38,22 @@ if code == "IRDO":
     ram, _, data = ovs[36]
     assert data[addr - ram:addr - ram + len(orig) // 2].hex() == orig, "el código original no coincide con la ROM"
     print("ok código original en la ROM")
+
+# ROM con otro umbral de variocolor (Redux: < 128, 1/512): la probabilidad base y el PID de los regalos lo siguen
+import gamedata, gift, random
+saved = gamedata.DATA.get("shiny_threshold")
+gamedata.DATA["shiny_threshold"] = 128
+assert bridge.shiny_base() == 512 and bridge.shiny_rolls(512) == 1 and bridge.shiny_rolls(2) > 300
+assert gift.is_shiny(100 << 16, 0, 0) and not gift.is_shiny(200 << 16, 0, 0)
+rng = random.Random(1)
+assert all(gift.is_shiny(gift.make_pid(rng, 7, 9, 127, True, None), 7, 9) for _ in range(50))
+try:
+    bridge.game.update(game={"code": "IRDO"}, compat={"shiny": True})
+    assert bridge.shiny_command(512).endswith(f"{orig} {orig}")         # 1/512 ya es lo normal: sin parche
+finally:
+    bridge.game.update(compat={}, game=None); bridge.shiny_odds = None
+    gamedata.DATA.pop("shiny_threshold", None)
+    if saved is not None:
+        gamedata.DATA["shiny_threshold"] = saved
+assert bridge.shiny_base() == 65536 // gamedata.shiny_threshold()
+print("ok umbral de variocolor")

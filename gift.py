@@ -18,7 +18,6 @@ import gamedata
 import pk5
 
 DATA = gamedata.DATA   # mismo diccionario: se actualiza si el puente regenera los datos
-MAX_SPECIES = 649
 DISTANT_LAND = 30008   # "Distant Land" / "Tierra lejana": lugar de encuentro de los regalos
 POKE_BALL = 4
 NATURES = 25
@@ -26,8 +25,8 @@ GLYPHS = {"♂": 0x246D, "♀": 0x246E}   # cómo guarda Gen 5 los símbolos de 
 
 
 def species_info(species: int) -> dict:
-    if not 1 <= species <= MAX_SPECIES:
-        raise ValueError(f"especie fuera de rango (1-{MAX_SPECIES}): {species}")
+    if not 1 <= species <= gamedata.max_species():
+        raise ValueError(f"especie fuera de rango (1-{gamedata.max_species()}): {species}")
     if "species" not in DATA:
         raise ValueError("faltan los datos del juego (gen5_data.json): genéralos con  python rom.py <ruta.nds>")
     return DATA["species"][str(species)]
@@ -58,7 +57,7 @@ def encode_name(name: str, chars: int) -> bytes:
 
 
 def is_shiny(pid: int, tid: int, sid: int) -> bool:
-    return (tid ^ sid ^ (pid >> 16) ^ (pid & 0xFFFF)) < 8
+    return (tid ^ sid ^ (pid >> 16) ^ (pid & 0xFFFF)) < gamedata.shiny_threshold()   # 8 en el original, 128 en Redux
 
 
 def gender_of(pid: int, ratio: int) -> int:
@@ -76,7 +75,7 @@ def make_pid(rng: random.Random, tid: int, sid: int, ratio: int, shiny: bool, ge
     for _ in range(100000):
         pid = rng.getrandbits(32)
         if shiny:   # fuerza variocolor: la mitad alta se ajusta a la baja y al ID
-            pid = (((pid & 0xFFFF) ^ tid ^ sid ^ (rng.getrandbits(3))) << 16) | (pid & 0xFFFF)
+            pid = (((pid & 0xFFFF) ^ tid ^ sid ^ rng.randrange(gamedata.shiny_threshold())) << 16) | (pid & 0xFFFF)
         if is_shiny(pid, tid, sid) != shiny:
             continue
         if gender is not None and gender_of(pid, ratio) != gender:
@@ -162,7 +161,7 @@ def summary(plain: bytes) -> dict:
     pid, tid, sid = struct.unpack_from("<I", plain, 0)[0], *struct.unpack_from("<HH", plain, 0x0C)
     iv32 = struct.unpack_from("<I", plain, 0x38)[0]
     return {
-        "species": sp, "name": DATA["species"][str(sp)]["name"] if 1 <= sp <= MAX_SPECIES else "?",
+        "species": sp, "name": DATA["species"][str(sp)]["name"] if str(sp) in DATA.get("species", {}) else "?",
         "level": next(l for l in range(100, 0, -1) if struct.unpack_from("<I", plain, 0x10)[0] >= exp_for_level(sp, l)),
         "moves": [DATA["moves"][m] for m in s["moves"] if m],
         "item": DATA["items"][s["held_item"]] if s["held_item"] else None,

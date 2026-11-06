@@ -19,6 +19,16 @@ def load(path: str = PATH) -> dict:
     return DATA
 
 
+def max_species() -> int:
+    """Última especie del juego (649 en el original; más en ROM ampliadas como White2Upgrade)."""
+    return len(DATA.get("species", {})) or 649
+
+
+def shiny_threshold() -> int:
+    """Variocolor si (TID ^ SID ^ PID alto ^ PID bajo) < este valor: 8 en el original (1/8192), 128 en Redux."""
+    return DATA.get("shiny_threshold") or 8
+
+
 def rom_info() -> dict:
     """{"code", "header_crc", ...} de la ROM de la que salen los datos, o {} si son de PKHeX."""
     return DATA.get("rom", {})

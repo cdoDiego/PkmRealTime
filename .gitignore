@@ -35,3 +35,6 @@ desktop.ini
 
 # tarjetas del Regalo Misterioso descargadas (datos del juego)
 wondercards/
+
+# sprites de Showdown descargados por tools/sprites_gen5.py (arte de la comunidad; se vuelven a bajar)
+sprites_showdown/

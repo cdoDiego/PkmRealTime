@@ -76,7 +76,7 @@ class EventIn(BaseModel):
     move: Optional[int] = None       # set_move: nº de movimiento
     move_slot: Optional[int] = None  # set_move: hueco 0-3
     qty: Optional[int] = None        # give_item / take_item (sin qty = todas); give/take/set_money: cantidad
-    species: Optional[int] = None    # give_pokemon: nº de Pokédex (1-649)
+    species: Optional[int] = None    # give_pokemon: nº de Pokédex (1-649, o más en una ROM ampliada)
     level: Optional[int] = None      # give_pokemon: 1-100 (por defecto 5)
     moves: Optional[list[int]] = None  # give_pokemon: 1-4 movimientos (por defecto, los de su nivel)
     shiny: bool = False
@@ -106,7 +106,7 @@ class EventIn(BaseModel):
     z: Optional[int] = None
     season: Optional[str] = None     # set_season: spring/summer/autumn/winter (primavera/verano/otoño/invierno) o 0-3
     hatch_cycles: Optional[int] = None   # give_egg / set_egg_cycles: ciclos para eclosionar (0-255; 0 = casi ya)
-    odds: Optional[int] = None       # set_shiny_odds: variocolor 1 de cada N encuentros salvajes (2-8192; sin odds = normal)
+    odds: Optional[int] = None       # set_shiny_odds: variocolor 1 de cada N encuentros salvajes (2-8192, 2-512 en Redux; sin odds = normal)
     persist: bool = False            # set_weather: volver a ponerlo cada vez que se regresa al mapa tras un combate
     pgf: Optional[str] = None        # give_wonder_card: tarjeta oficial de la carpeta wondercards/ (ej. "genesect")
     title: Optional[str] = None      # give_wonder_card: título de la tarjeta (máx. 36 letras)
@@ -470,15 +470,20 @@ def parse_compat(field: str) -> dict:
 # (rolls = 1, +2 con el Amuleto Iris). Se parchea "movs r6,#1" (nº de tiradas) y, para más de 255, "movs r6,#0" (inicio
 # del contador) por "lsls r0,r0,#s" (tiradas × 2^s; el contador empieza en N, da igual). Ver DOCUMENTACION.md.
 SHINY_PATCH = {"IRDO": (0x021A0E18, "012676f69bfa9e2189000122042367f625fb002800d0b61c301c72f661fd0026")}
-SHINY_BASE = 8192          # 1 de cada 8192 sin parche
+SHINY_BASE = 8192          # 1 de cada 8192 sin parche en el original (Redux: 1/512); ver shiny_base()
 SHINY_MAX_ROLLS = 40000    # ~99 %; cada tirada cuesta poco, pero 40.000 ya se notan al empezar el combate
 shiny_odds: Optional[int] = None
 
 
 def shiny_rolls(odds: int) -> int:
-    """Tiradas para que salga variocolor ~1 de cada "odds" encuentros: 1 - (1 - 1/8192)^tiradas = 1/odds."""
+    """Tiradas para que salga variocolor ~1 de cada "odds" encuentros: 1 - (1 - 1/base)^tiradas = 1/odds."""
     import math
-    return max(1, min(SHINY_MAX_ROLLS, round(math.log(1 - 1 / odds) / math.log(1 - 1 / SHINY_BASE))))
+    return max(1, min(SHINY_MAX_ROLLS, round(math.log(1 - 1 / odds) / math.log(1 - 1 / shiny_base()))))
+
+
+def shiny_base() -> int:
+    """1 de cada cuántos sale variocolor sin parche: 65536 / umbral de la ROM (8192 en el original, 512 en Redux)."""
+    return 65536 // gamedata.shiny_threshold()
 
 
 def shiny_patch_bytes(orig: str, rolls: int) -> str:
@@ -499,12 +504,12 @@ def shiny_command(odds) -> str:
         raise ValueError(f"probabilidad de variocolor: falta la dirección para el juego {gid}")
     require_compat("shiny")
     addr, orig = SHINY_PATCH[gid]
-    if odds is None or int(odds) >= SHINY_BASE:
+    if odds is None or int(odds) >= shiny_base():
         shiny_odds = None
         return f"P {addr:#x} {orig} {orig}"
     odds = int(odds)
     if odds < 2:
-        raise ValueError("odds va de 2 (la mitad) a 8192 (normal)")
+        raise ValueError(f"odds va de 2 (la mitad) a {shiny_base()} (normal)")
     shiny_odds = odds
     return f"P {addr:#x} {orig} {shiny_patch_bytes(orig, shiny_rolls(odds))}"
 
@@ -640,7 +645,7 @@ def prepare_data() -> None:
     import rom
     r = rom.Rom(path)
     info = gamedata.rom_info()
-    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "move_info" in gamedata.DATA:
+    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "shiny_threshold" in gamedata.DATA:
         print(f"Datos del juego: {r.title} {r.code} (al día)")
         return
     print(f"Generando datos del juego desde {r.title} {r.code}...")

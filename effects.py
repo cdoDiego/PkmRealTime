@@ -10,7 +10,6 @@ import random
 import field_script
 import gamedata
 
-MAX_SPECIES = 649
 # Ciudades a las que se puede viajar (sin Ciudad Negra ni Bosque Blanco: dependen de la versión y del avance)
 TELEPORT_CITIES = ["aspertia", "virbank", "castelia", "nimbasa", "driftveil", "mistralton", "icirrus", "opelucid",
                    "lacunosa", "undella", "humilau", "nacrene", "striaton", "accumula", "nuvema"]
@@ -67,7 +66,7 @@ def _money(amount: int):
 
 def _random_pokemon(shiny: bool):
     def f(game, rng):
-        sp, lvl = rng.randint(1, MAX_SPECIES), _avg_level(game)
+        sp, lvl = rng.randint(1, gamedata.max_species()), _avg_level(game)
         txt = f"¡{species_name(sp)}{' variocolor' if shiny else ''} (Nv. {lvl}) a la caja 1!"
         return txt, [{"type": "give_pokemon", "species": sp, "level": lvl, "shiny": shiny}]
     return f
@@ -99,14 +98,14 @@ def _faint_one(game, rng):
 
 
 def _wonder_card(game, rng):
-    sp, lvl = rng.randint(1, MAX_SPECIES), _avg_level(game)
+    sp, lvl = rng.randint(1, gamedata.max_species()), _avg_level(game)
     name = species_name(sp)
     return (f"¡Regalo misterioso: {name} (Nv. {lvl})! Recógelo con el repartidor del Centro Pokémon",
             [{"type": "give_wonder_card", "species": sp, "level": lvl, "title": f"¡{name} de regalo!"[:36]}])
 
 
 def _wild_battle(game, rng):
-    sp, lvl = rng.randint(1, MAX_SPECIES), min(100, _avg_level(game) + 2)
+    sp, lvl = rng.randint(1, gamedata.max_species()), min(100, _avg_level(game) + 2)
     return f"¡Un {species_name(sp)} salvaje (Nv. {lvl}) te ataca!", [{"type": "start_wild_battle", "species": sp, "level": lvl}]
 
 

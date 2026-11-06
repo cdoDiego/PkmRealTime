@@ -140,6 +140,61 @@ class Rom:
     def text(self, index: int) -> list[str]:
         return decode_text(self.narc(TEXT)[index])
 
+    # --- código del juego
+    def arm9(self) -> bytes:
+        """Programa principal (arm9), descomprimido si viene comprimido (BLZ, como en la ROM original)."""
+        off, _, _, size = struct.unpack_from("<IIII", self.data, 0x20)
+        raw = self.data[off:off + size]
+        end = (len(raw.rstrip(b"\0")) + 3) & ~3          # algunos parches dejan relleno con ceros detrás
+        try:
+            return _blz_decompress(raw[:end])
+        except ValueError:
+            return raw
+
+    def shiny_threshold(self) -> int:
+        """Variocolor si (TID ^ SID ^ PID alto ^ PID bajo) < umbral: 8 en el original (1/8192); Redux usa 128 (1/512).
+        Se lee de PML_UtilPIDIsRare ("cmp r0, #umbral" tras los XOR); 8 si no se encuentra."""
+        code = self.arm9()
+        i = code.find(SHINY_CHECK_SIG)
+        if i < 0 or code[i + len(SHINY_CHECK_SIG) + 1] != 0x28:   # 0x28 = cmp r0, #imm
+            return 8
+        return code[i + len(SHINY_CHECK_SIG)] or 8
+
+
+# PML_UtilPIDIsRare (arm9, 0x0201CE04 en W2 USA): XOR de las dos mitades del PID y del ID; detrás va "cmp r0, #umbral"
+SHINY_CHECK_SIG = bytes.fromhex("0a041940034000041b0c000c090c5840120c48405040")
+
+
+def _blz_decompress(d: bytes) -> bytes:
+    """Compresión "backward LZ" de los binarios de DS: se lee desde el final; la cola dice cuánto ocupa."""
+    if len(d) < 8:
+        raise ValueError("demasiado corto")
+    info, extra = struct.unpack_from("<II", d, len(d) - 8)
+    enc_len, hdr_len = info & 0xFFFFFF, info >> 24
+    if not 8 <= hdr_len <= 11 or enc_len > len(d) or extra > 0x400000 or enc_len < hdr_len:
+        raise ValueError("no está comprimido")
+    out = bytearray(d) + bytearray(extra)
+    src, dst, stop = len(d) - hdr_len, len(out), len(d) - enc_len
+    while src > stop:
+        src -= 1
+        flags = d[src]
+        for _ in range(8):
+            if src <= stop:
+                break
+            if flags & 0x80:
+                src -= 2
+                v = d[src] | d[src + 1] << 8
+                n, disp = (v >> 12) + 3, (v & 0xFFF) + 3
+                for _ in range(n):
+                    dst -= 1
+                    out[dst] = out[dst + disp]
+            else:
+                src -= 1
+                dst -= 1
+                out[dst] = d[src]
+            flags = (flags << 1) & 0xFF
+    return bytes(out)
+
 
 def decode_text(d: bytes) -> list[str]:
     """Texto cifrado de Gen 5 (formato de B/W y B2/W2)."""
@@ -166,12 +221,23 @@ def decode_text(d: bytes) -> list[str]:
     return out
 
 
+def species_count(names: list[str], personal_len: int) -> int:
+    """Especies de verdad: detrás de la última van "Huevo" y "Huevo Malo" ("Egg"/"Bad Egg"...; en todos los idiomas
+    el primero está dentro del segundo). En el original están en la 650, en White2Upgrade en la 722. Las entradas
+    de "personal" que sobran son formas alternativas."""
+    count = next((i - 1 for i in range(650, len(names) - 1) if names[i] and names[i] in names[i + 1]), 649)
+    return max(1, min(count, personal_len - 1, len(names) - 1))
+
+
 def build_data(rom: Rom) -> dict:
     personal = rom.personal()
     learn = rom.learnsets()
     names = rom.text(TEXT_SPECIES)
+    count = species_count(names, len(personal))
+    move_names, moves_narc = rom.text(TEXT_MOVES), rom.narc(MOVES)
+    n_moves = min(len(move_names), len(moves_narc))
     species = {}
-    for sp in range(1, 650):
+    for sp in range(1, count + 1):
         e = personal[sp]
         species[str(sp)] = {"name": names[sp], "stats": list(e[0:6]), "gender": e[0x12], "friendship": e[0x14],
                             "growth": e[0x15], "abilities": [e[0x18], e[0x19], e[0x1A]], "learnset": learn[sp]}
@@ -180,11 +246,12 @@ def build_data(rom: Rom) -> dict:
         "rom": {"title": rom.title, "code": rom.code, "version": rom.version, "header_crc": rom.header_crc},
         "exp": EXP_TABLES,
         "species": species,
-        "move_pp": rom.move_pp()[:560],
-        "move_info": rom.move_info()[:560],
-        "abilities": rom.text(TEXT_ABILITIES)[:165],
-        "moves": rom.text(TEXT_MOVES)[:560],
-        "items": rom.text(TEXT_ITEMS)[:639],
+        "shiny_threshold": rom.shiny_threshold(),
+        "move_pp": rom.move_pp()[:n_moves],
+        "move_info": rom.move_info()[:n_moves],
+        "abilities": rom.text(TEXT_ABILITIES),
+        "moves": move_names[:n_moves],
+        "items": rom.text(TEXT_ITEMS),
         # cada entrenador: [clase, tipo de combate (0 individual, 1 doble, 2 triple, 3 rotatorio), nº de Pokémon]
         "trainers": [[d[1], d[2], d[3]] if len(d) >= 4 else [0, 0, 0] for d in rom.narc(TRDATA)],
         "trainer_classes": rom.text(TEXT_TRAINER_CLASSES),

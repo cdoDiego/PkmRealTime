@@ -31,7 +31,8 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── requirements.txt
 ├── overlay/               Overlay y ruleta para OBS (páginas de configuración + vistas); lo sirve el puente en /overlay/
 ├── lua/                   Scripts de BizHawk: connector.lua, dump_ram.lua, watch_ram.lua
-├── tools/                 ram_tool.py (análisis de volcados), wonder_card.py (álbum del Regalo Misterioso)
+├── tools/                 ram_tool.py (análisis de volcados), wonder_card.py (álbum del Regalo Misterioso),
+│                          rom_compare.py (romhacks), sprites_gen5.py (sprites de Showdown en la ROM)
 ├── tests/                 Pruebas (run_all.py las ejecuta todas)
 ├── postman/               Colección de Postman con todas las peticiones
 ├── docs/                  Esta documentación
@@ -41,7 +42,7 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ```
 
 No se suben a git (ver `.gitignore`): `config_local.py`, `roulette.json`, ROMs y partidas, `gen5_data.json` (sale de la ROM de cada persona),
-`dumps/`, `pk5_export/` y `wondercards/`.
+`dumps/`, `pk5_export/`, `wondercards/` y `sprites_showdown/` (sprites descargados).
 
 ## 1. Cómo encaja todo
 
@@ -473,7 +474,7 @@ Qué implica:
   `adds r6,#2` · `mov r0,r6` · `bl PassPower_ApplyLuckyShiny` · `movs r6,#0` (`+0x36`, contador del bucle).
 - Parche (`set_shiny_odds`): el byte de `movs r6,#N` = tiradas (hasta 255 ≈ 1/32). Para más, `movs r6,#0` pasa a
   `lsls r0,r0,#s` (tiradas × 2^s); el contador empieza entonces en N en vez de 0, así que hace N·(2^s − 1) tiradas.
-  Tiradas para "1 de cada X": `ln(1 − 1/X) / ln(1 − 1/8192)` (1/100 → 82; 1/2 → ~5700; máximo 40.000 ≈ 99 %).
+  Tiradas para "1 de cada X": `ln(1 − 1/X) / ln(1 − 1/base)`, base = 65536 / umbral de la ROM (8192; 512 en Redux) (1/100 → 82; 1/2 → ~5700; máximo 40.000 ≈ 99 %).
 - El overlay del mapa se recarga desde la ROM al salir de cada combate, y en combate esa memoria la ocupa el overlay
   del combate: el Lua mantiene el parche (`P`) y solo escribe si los 32 bytes son exactamente el original o el parche.
 - Validado: con 1/2, variocolor al 4.º encuentro; el parche vuelve solo al salir del combate; al quitarlo la memoria
@@ -616,6 +617,8 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tests/test_field_script.py` | Pruebas de los guiones propios (combates forzados y clima) |
 | `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
+| `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
+| `python tools/sprites_gen5.py convertir --rom W2.nds --salida x.nds --especie 25 --nombre sylveon` | Pone ese sprite en lugar del de la especie 25, en una copia de la ROM: animado, o fijo con `--fijo` (necesita `pip install pillow`) |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
 
@@ -641,6 +644,8 @@ y se guardan en `gen5_data.json`. Así funciona con ROM aleatorizadas y en el id
 | Datos de movimientos | NARC `a/0/2/1` (byte 5 = PP) | PP al curar y en `set_move` |
 | Textos | NARC `a/0/0/2`, archivos 90 (especies), 374 (habilidades), 403 (movimientos), 64 (objetos) | Nombre de los regalos, `/state` |
 | Curvas de experiencia | Fórmulas oficiales (no cambian) | Experiencia según nivel |
+| Cuántas especies, movimientos, habilidades y objetos | Largo de las tablas de nombres; la última especie va justo antes de "Huevo" / "Huevo Malo" | Límites de `give_pokemon`, `set_move`, ruleta (649 / 559 en el original, más en ROM ampliadas) |
+| Umbral de variocolor | arm9 (descomprimido), `PML_UtilPIDIsRare`: `cmp r0, #umbral` | `shiny` en `/state`, regalos variocolor, `set_shiny_odds` (8 = 1/8192 en el original; Redux 128 = 1/512) |
 
 - Con `ROM_PATH` en `config_local.py`, el puente genera `gen5_data.json` al arrancar, y lo rehace si cambias de ROM.
   A mano: `python rom.py "ruta.nds"`.
@@ -689,7 +694,7 @@ habilidades, objetos, entrenadores) y se comprueba que sean de la ROM que se jue
 | --- | --- |
 | Randomizer (Universal Pokemon Randomizer ZX) | Funciona: cambia datos y algo de código que no usamos. **Validado el 28-oct** (UPR ZX 4.6.1), ver abajo. |
 | Romhack que solo cambia datos | Igual que el randomizer. **Volt White 2 (Drayano) validado el 28-oct**, ver abajo. |
-| Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse; además hay límites fijos (649 especies de reserva, 638 objetos en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, `field_script`, listas de `bag.py`). |
+| Romhack que cambia código (p. ej. Blaze Black 2 / Volt White 2 Redux, más objetos o especies) | Las direcciones pueden moverse (lo dicen las firmas y `rom_compare.py`). Especies, movimientos y umbral de variocolor ya salen de la ROM; los objetos siguen fijos (638 en `pk5.MAX_ITEM`, `battle.MAX_ITEM`, listas de `bag.py`). **Volt White 2 Redux v1.4.1 revisado el 06-nov**, ver abajo. |
 
 **Firmas de código (28-oct):** antes de usar una dirección de código, el Lua comprueba que ahí estén los bytes del juego
 original (`sigs` en `GAMES` de `connector.lua`, sacados de la ROM). Así un hack que mueva el código no hace que se escriba a
@@ -718,10 +723,11 @@ Plan:
 - [ ] **2. Buscar las direcciones si se movieron:** mismo método que `tools/symbol_offset.py` (buscar la firma en la RAM o en la
   ROM); también sirve para Black 2.
 - [x] **3. Probar con un randomizer:** hecho el 28-oct (abajo).
-- [ ] **5. Redux** (Blaze Black 2 / Volt White 2 Redux): cambia mucho más; pasarle antes `tools/rom_compare.py` y hacer el paso 1.
+- [x] **5. Redux** (Volt White 2 Redux v1.4.1): revisado sin jugar el 06-nov (abajo); falta probarlo en el juego.
 
 **Herramienta:** `python tools/rom_compare.py <original.nds> <hack.nds>` compara overlays y el arm9 descomprimidos (BLZ), avisa
-si alguna zona cambiada toca una dirección que usa `connector.lua` y revisa las firmas en el hack.
+si alguna zona cambiada toca una dirección que usa `connector.lua` y revisa las firmas en el hack. Si un overlay se carga en otra
+dirección o con otro tamaño, lo compara por dirección de memoria en la parte común (antes lo marcaba entero como "revisar").
 
 **Randomizer (28-oct, UPR ZX 4.6.1, cartucho `IRDO`, CRC de cabecera `0b43`):**
 - Código: cambia 6 overlays (36, 162, 166, 284, 294, 316) y 8 zonas del arm9, ninguna en el código que usamos; las firmas
@@ -743,7 +749,88 @@ si alguna zona cambiada toca una dirección que usa `connector.lua` y revisa las
   eclosión rápida (Larvesta), los dos enviados seguidos.
 - Arreglos que salieron: dos guiones seguidos (el Lua rechazaba el segundo; ahora van en cola), el huevo rápido se busca por especie
   y no por hueco, y los símbolos PK/MN del texto (`PKMN Trainer`).
-- [ ] **4. Límites desde la ROM:** nº de objetos y especies leídos de la ROM en vez de 638/649 fijos.
+- [x] **4. Límites desde la ROM** (06-nov): especies, movimientos, habilidades y umbral de variocolor. Falta el nº de objetos
+  (638 fijo en `pk5.MAX_ITEM`, `battle.MAX_ITEM` y `bag.py`; Redux y White2Upgrade tienen los mismos 639 nombres).
+
+**Volt White 2 Redux (06-nov, v1.4.1 "Complete", cartucho `IRDO`), revisado sin jugar:**
+- Código: el overlay 167 (combate) se carga `0x180` bytes antes y crece lo mismo; por dirección solo cambian 101 bytes, todos del
+  tipo Hada (`GetTypeEffectiveness`, `GetTypeWeaknesses`, `splitTypeCore`, Conversión 2, Cambio Color). No toca el servidor, los
+  adaptadores ni la estructura del combatiente. Otros cambios: overlays 36 (Grutas Ocultas, Neblina), 166 (Recogida), 168, 207/255/265
+  (iconos de tipo en estado, cajas y Salón de la Fama); arm9: lista de MT, clases de entrenador, fuente y `PML_UtilPIDIsRare`.
+  **Las 13 firmas coinciden** y el indicador de combate (`0x021B5178`, bytes del overlay 167) no cambia.
+- Datos (`rom.py`): tipo Hada = 17 en 43 especies (Clefairy Hada, Gardevoir Psíquico/Hada...) y 9 movimientos. Los movimientos
+  nuevos **reemplazan** a otros en su número (4 Puño Cometa → Power-Up Punch, 66 Sumisión → Play
+  Rough, 296 Bola Neblina → Moonblast...): siguen 560 movimientos y 649 especies. 891 entrenadores.
+- Variocolor 1/512 (umbral 128): ya se lee de la ROM (`shiny_threshold`), así que `shiny`, los regalos variocolor y
+  `set_shiny_odds` (que ahora va de 2 a 512) lo tienen en cuenta.
+
+### Sprites de especies nuevas (estilo Gen 5, 06-nov, experimental)
+
+Objetivo: sprites para las especies de Gen 6-9 con el aspecto de Gen 5, **animados**, sin código nuevo en el juego.
+
+**Fuente de los dibujos:** Pokémon Showdown (`play.pokemonshowdown.com/sprites/`: `gen5ani*` animados, `gen5*` fijos).
+- Son de la comunidad (proyecto de sprites de Smogon): uso no comercial y con crédito, sin licencia libre.
+- PokéRogue usa los mismos en las especies que anima, pero Showdown tiene muchos más animados.
+
+| Gen | Frente animado | Fijos (4 vistas) |
+| --- | --- | --- |
+| 6 | 54 de 72 | todos |
+| 7 | 74 de 88 | todos |
+| 8 | 64 de 96 | todos |
+| 9 | 25 de 120 | todos |
+
+- Los GIF tienen 8-180 fotogramas (mediana ~78) y casi siempre <= 16 colores.
+- El variocolor es el mismo dibujo con otra paleta, salvo excepciones (p. ej. Zeraora).
+
+**Cómo dibuja el juego un Pokémon** (MCSS, `src/system/mcss.c` de la decomp). Cada especie tiene 20 archivos en `a/0/0/4`:
+
+| Archivo (frente / espalda) | Qué es |
+| --- | --- |
+| 0 / 9 | Imagen de 96×96 para pantallas 2D: cuadros de 8×8 en el orden de 4 piezas OAM (64×64, 32×64, 64×32, 32×32) |
+| 1, 3 / 10, 12 | Versión hembra (vacío si no hay) |
+| 2 / 11 | **Textura del combate**, 256×128 a 4 bits (MCSS reserva `0x4000` bytes por sprite): las piezas del Pokémon |
+| 4 / 13 | Celdas (NCER) |
+| 5 / 14 | Animación de celdas (NANR, LZ): qué celda muestra cada nodo y cómo se mueve |
+| 6 / 15 | Multi-celda (NMCR): los nodos, con su posición y su animación |
+| 7 / 16 | Animación de la multi-celda (NMAR) |
+| 8 / 17 | `bin` de MCSS (sin comprimir): tamaño y desplazamiento del dibujo, y por celda uno o dos rectángulos de la textura |
+| 18, 19 | Paletas normal y variocolor (frente y espalda comparten paleta, 15 colores + transparente) |
+
+- En NCGR los píxeles empiezan en `0x18 + u32@0x2C`.
+- Un píxel son `0x100` unidades.
+- El punto de apoyo del sprite está en los pies. Si la posición se calcula desde el centro del lienzo, el Pokémon queda en el aire.
+
+**Método** (`tools/sprites_gen5.py`):
+- Cada fotograma del GIF se corta en cuadritos de 8×8; los únicos van a la textura (caben 512).
+- Cada posición de la rejilla es un nodo: unos 50 por sprite, cuando los originales usan 10-20.
+- La animación de cada nodo elige qué cuadrito se ve en cada fotograma (elemento de tipo 0, solo índice).
+- Si los cuadritos no caben, se usa uno de cada 2, 3... fotogramas.
+- La animación de la multi-celda tiene que durar el ciclo entero. Con 4 fotogramas, al repetirse reiniciaba los nodos y el
+  sprite se quedaba quieto.
+
+**Espacio en la ROM:**
+- El archivo de sprites crece unos 50 KB por especie animada, casi todo por el `bin` sin comprimir.
+- En las ROM "NDSi Enhanced" (como W2 USA), en modo DS solo se puede leer hasta el inicio de la zona DSi: `0x92` de la
+  cabecera, `0x11800000`. Dentro de ese límite quedan ~5,6 MB.
+- melonDS (BizHawk) lo imita a propósito (`src/NDSCart/CartCommon.cpp`: *in DS mode: block the entire DSi area*). Con datos
+  detrás, la pantalla se queda en blanco.
+- **Solución validada:** el archivo va al final de la ROM, y la cabecera lleva `0x90` y `0x92` hasta el final (512 MB), con
+  el `crc16` de cabecera recalculado. Quedan unos 230 MB libres.
+- La ROM así ya no sirve en modo DSi; BizHawk usa el modo DS.
+- No sirvió quitar la marca DSi (`0x12` = 0) ni mover solo `0x90`.
+
+**Validado en el juego (06-nov, W2 USA en BizHawk):**
+- Sylveon de Showdown en lugar de Pikachu: primero fijo y después **animado de frente y de espalda**, en combate y en el resumen.
+- Apoyado en el suelo, sin cuelgues, y con los datos al final de la ROM.
+- La herramienta produce los mismos bytes que esa prueba.
+
+Pendiente:
+- Especies con más de 512 cuadritos (Incineroar, Necrozma), que pierden fotogramas.
+- El variocolor en el juego.
+- Combates dobles.
+- Usarlo con especies propias en vez de sustituir a otra. Hace falta una base con la Pokédex ampliada: White2Upgrade
+  (revisado el 06-nov) llega a la 721, pero sus sprites son fijos y su Pokédex del guardado no está ampliada (pisa
+  banderas a partir de la 673).
 
 ## 7. API
 
@@ -867,7 +954,7 @@ Eventos disponibles:
 - `/state`: cada Pokémon (equipo y combate) muestra también `shiny`, `gender`, `form`, `ability` y `hidden_ability`.
 - `give_money` / `take_money` / `set_money`: dinero (`qty`). No baja de 0 ni pasa de 9.999.999. Con el personaje libre.
   `/state` muestra `money` y `badges` (número de medallas).
-- `set_shiny_odds`: probabilidad de variocolor en los encuentros salvajes (`odds`: 1 de cada N, de 2 a 8192; sin `odds`
+- `set_shiny_odds`: probabilidad de variocolor en los encuentros salvajes (`odds`: 1 de cada N, de 2 a 8192, o a 512 en Redux; sin `odds`
   = normal). Sale del todo con 1/8192 de serie; queda puesto hasta quitarlo (o cerrar el Lua). Si el Lua se reconecta,
   el puente lo vuelve a mandar. Solo White 2 (`IRDO`) por ahora.
 - `give_wonder_card`: mete una Tarjeta Misteriosa en el álbum; el regalo lo entrega el **repartidor** del Centro Pokémon
@@ -1034,6 +1121,8 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 06-nov | **Sprites animados de Showdown en la ROM** (`tools/sprites_gen5.py`): cuadritos de 8×8 en la textura del combate y un nodo por posición. Validado en el juego con Sylveon: fijo, animado y apoyado en el suelo. Espacio: datos al final de la ROM, con la zona DSi de la cabecera (`0x90`/`0x92`) llevada al final, porque melonDS bloquea esa zona en modo DS. |
+| 06-nov | Límites desde la ROM: especies (hasta la que va antes de "Huevo"), movimientos, habilidades, objetos (nombres) y umbral de variocolor (`PML_UtilPIDIsRare`, arm9 descomprimido en `rom.py`). Lo usan `pk5`, `gift`, `effects`, `field_script`, `move_pp`, `set_shiny_odds` y `ram_tool`. `rom_compare.py` compara por dirección los overlays que se cargan en otro sitio. Volt White 2 Redux revisado: el puente es compatible (falta probarlo en el juego). |
 | 04-nov | Probado en vivo: registro correcto en dos combates (daño, PP, Restos, Tóxico, cambios, experiencia) y cambio del rival. Arreglos: `DAMAGE_PLURAL` lleva detrás los pokeID golpeados (el lector se perdía), bloques repetidos (se copiaban con el adaptador libre), Tóxico = "envenenamiento grave". Nuevo: eficacia, críticos, "no afecta", causa de cada cambio de vida y la vida tras cada golpe. |
 | 04-nov | Control del rival (`rival.py`, `rival_action`), pausa del turno sin parches de código (estado 2 del adaptador, órdenes `H`/`HR` del Lua, `rival_control`) y registro de turnos (`battle_log.py`, `battle_cmd.decode`, `GET /battle/log`). Todo sale de la decomp y se comprobó con los volcados y pruebas; falta probarlo en el juego. `rom.py` añade tipo, categoría y potencia de los movimientos (`move_info`; el puente regenera `gen5_data.json`). |
 | 03-nov | Regalo Misterioso: álbum en puntero + `0x1D120`, cifrado en RAM; `wondercard.py` (formato PGF y cifrado), `tools/wonder_card.py`, evento `give_wonder_card` (lee y luego escribe con guardas) y premio de ruleta "Regalo misterioso". El repartidor aparece al cargar el mapa del Centro si hay tarjetas sin entregar (guion `global_10395`, comando `MysteryGifts`). Validado: Genesect oficial, Pikachu variocolor propio y Caramelo Raro entregados por el repartidor; se conservan al guardar y reiniciar. |
@@ -1142,6 +1231,20 @@ Notas:
 - [x] Guardar y reiniciar: se conserva lo recibido y las tarjetas quedan entregadas.
 - [ ] `give_wonder_card` por el puente y el premio de la ruleta (probado solo con un Lua simulado).
 - [ ] Álbum lleno: la 13.ª tarjeta reemplaza a una ya entregada.
+
+### Sprites Gen 5 (en el juego)
+- [x] Sprite fijo de Showdown en lugar del de otra especie (Sylveon en Pikachu): el combate va normal.
+- [x] Animado de frente y de espalda (combate y resumen), apoyado en el suelo.
+- [x] Datos al final de la ROM con `0x90`/`0x92` al final (en BizHawk).
+- [ ] Variocolor (un salvaje variocolor de la especie sustituida).
+- [ ] Especie con más de 512 cuadritos (p. ej. Incineroar): se ve bien con menos fotogramas.
+- [ ] Combate doble con dos sprites animados.
+
+### Volt White 2 Redux (en el juego)
+- [ ] Con `ROM_PATH` a Redux: el puente regenera `gen5_data.json` (`shiny_threshold` 128, Clefairy tipo 17).
+- [ ] Combate: registro, `battle_set_hp`, `rival_action` y la pausa funcionan igual (firmas `true` en `/state`).
+- [ ] Un variocolor salvaje sale con `shiny: true` en `/state`; `set_shiny_odds` con 50 sube la frecuencia.
+- [ ] Regalo variocolor (`give_pokemon` con `shiny`) se ve variocolor en el juego.
 
 ### Control del rival y registro (en el juego)
 - [x] `GET /battle/log` en un combate contra entrenador: turnos, daño, cambios y la foto de cada turno coinciden con lo visto.

@@ -152,12 +152,19 @@ def main() -> None:
     for o in changed:
         ra, sa, da = ov_a[o]
         rb, sb, db = ov_b.get(o, (0, 0, b""))
+        moved = ""
         if (ra, sa) != (rb, sb):
-            print(f"  overlay {o}: se carga en otra dirección o con otro tamaño" + ("  <-- lo usa connector.lua" if o in used else ""))
-            hit = hit or o in used
-            continue
+            # otra dirección o tamaño (p. ej. Redux añade 0x180 bytes delante del 167): se compara por dirección de memoria
+            # en la parte común; lo que solo está en el hack es código o datos nuevos que no usamos
+            moved = f" (carga {ra:#x}+{len(da):#x} -> {rb:#x}+{len(db):#x}; comparado por dirección)"
+            lo, hi = max(ra, rb), min(ra + len(da), rb + len(db))
+            da, db, ra = da[lo - ra:hi - ra], db[lo - rb:hi - rb], lo
+            outside = sorted(name for u, name in used.get(o, []) if not lo <= u < hi)
+            if outside:
+                print(f"  overlay {o}: fuera de la parte común: {', '.join(outside)}  <-- lo usa connector.lua")
+                hit = True
         regions = diff_regions(da, db, ra)
-        print(f"  overlay {o}: {len(regions)} zonas distintas ({sum(n for _, n in regions)} bytes)")
+        print(f"  overlay {o}: {len(regions)} zonas distintas ({sum(n for _, n in regions)} bytes){moved}")
         show(regions, o)
     regions = diff_regions(arm_a, arm_b, a9r)
     print(f"arm9: {len(arm_a)} / {len(arm_b)} bytes; {len(regions)} zonas distintas ({sum(n for _, n in regions)} bytes)")

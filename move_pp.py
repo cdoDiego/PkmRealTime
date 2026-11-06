@@ -36,12 +36,17 @@ PP = (
     10, 10, 10, 15, 15,  5,  5, 10, 10, 10,  5,  5, 10,  5,  5, 15, 10,  5,  5,  5,
 )
 
-MAX_MOVE = len(PP) - 1
+MAX_MOVE = len(PP) - 1   # del juego original; con la ROM cargada manda max_move()
+
+
+def max_move() -> int:
+    """Último movimiento del juego: el de la ROM (más en ROM ampliadas) o 559."""
+    return len(gamedata.DATA.get("move_pp") or PP) - 1
 
 
 def max_pp(move: int, pp_ups: int = 0) -> int:
     """PP máximos con las Más PP aplicadas (fórmula de PKHeX: base * (5 + ups) // 5)."""
-    if not 0 < move <= MAX_MOVE:
-        return 0
     table = gamedata.DATA.get("move_pp") or PP
+    if not 0 < move < len(table):
+        return 0
     return table[move] * (5 + pp_ups) // 5

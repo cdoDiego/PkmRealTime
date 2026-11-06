@@ -6,6 +6,7 @@ Fuente del formato: projectpokemon.org (Pokemon NDS Structure / BW save structur
 import functools
 import struct
 
+import gamedata
 import move_pp
 
 BOX_SIZE = 136
@@ -142,7 +143,7 @@ def summary(plain: bytes) -> dict:
     # 2 sin sexo, 3-7 forma), 0x41 naturaleza, 0x42 bit 0 = habilidad oculta
     pid, tid, sid = struct.unpack_from("<I", plain, 0)[0], u16(0x0C), u16(0x0E)
     info.update(
-        shiny=((pid >> 16) ^ (pid & 0xFFFF) ^ tid ^ sid) < 8,
+        shiny=((pid >> 16) ^ (pid & 0xFFFF) ^ tid ^ sid) < gamedata.shiny_threshold(),
         gender="genderless" if plain[0x40] & 4 else "female" if plain[0x40] & 2 else "male",
         form=plain[0x40] >> 3,
         ability=plain[0x15],
@@ -217,8 +218,8 @@ def set_move(raw: bytes, move_slot: int, move: int) -> bytearray:
     """
     if not 0 <= move_slot <= 3:
         raise ValueError(f"hueco de movimiento fuera de rango (0-3): {move_slot}")
-    if not 0 <= move <= move_pp.MAX_MOVE:
-        raise ValueError(f"movimiento fuera de rango (0-{move_pp.MAX_MOVE}): {move}")
+    if not 0 <= move <= move_pp.max_move():
+        raise ValueError(f"movimiento fuera de rango (0-{move_pp.max_move()}): {move}")
     p = decrypt(raw)
     moves = [struct.unpack_from("<H", p, OFF_MOVES + 2 * i)[0] for i in range(4)]
     if move and move in moves and moves.index(move) != move_slot:
