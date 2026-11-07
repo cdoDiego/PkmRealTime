@@ -32,7 +32,8 @@ Juego: **Pokémon White 2 USA** (código `IRDO`) · Emulador: **BizHawk 2.11.1**
 ├── overlay/               Overlay y ruleta para OBS (páginas de configuración + vistas); lo sirve el puente en /overlay/
 ├── lua/                   Scripts de BizHawk: connector.lua, dump_ram.lua, watch_ram.lua
 ├── tools/                 ram_tool.py (análisis de volcados), wonder_card.py (álbum del Regalo Misterioso),
-│                          rom_compare.py (romhacks), sprites_gen5.py (sprites de Showdown en la ROM)
+│                          rom_compare.py (romhacks), sprites_gen5.py (sprites de Showdown en la ROM),
+│                          w2u_build/ (compilar White2Upgrade con Docker)
 ├── tests/                 Pruebas (run_all.py las ejecuta todas)
 ├── postman/               Colección de Postman con todas las peticiones
 ├── docs/                  Esta documentación
@@ -94,7 +95,7 @@ En nuestras pruebas el puntero vale siempre `0x02204D04`, pero el código lo vue
 | Datos del jugador | puntero + `0x19D20` | `0x24` bytes | Nombre (`+0x04`), TID (`+0x14`), SID (`+0x16`), idioma (`+0x1E`), juego (`+0x1F`), género (`+0x21`) | Volcados + PKHeX (`MyStatus5`) | ✅ usado en regalos 27-oct |
 | Mochila | puntero + `0x18D20` | `0x998` bytes | 5 bolsillos sin cifrar (ver abajo). En la prueba: `0x0221DA24` | Volcados + PKHeX (`PlayerBag5B2W2`) | ✅ leída y escrita 27-oct |
 | Estado de combate | `0x021B5178` | u16 | `0x2100` o `0x2101` = en combate | Tracker (`battleStatus`, W2) | ✅ validado 25-oct |
-| Bandera de control libre | `0x0223B2F5` | u8 | `0` = caminando libre; `1` = menú, diálogo, equipo, datos, mochila, combate | `ram_tool.py diff` + `watch_ram.lua` | ✅ validado 26-oct (también tras reiniciar el juego) |
+| Bandera de control libre | `0x0223B2F5` (puntero + `0x365F1`) | u8 | `0` = caminando libre; `1` = menú, diálogo, equipo, datos, mochila, combate. El Lua la lee relativa al puntero base: en White2Upgrade está en `0x0223E3D5` | `ram_tool.py diff` + `watch_ram.lua` | ✅ validado 26-oct (también tras reiniciar el juego) |
 | Dinero y medallas (bloque Misc) | puntero + `0x21A20` | u32 + u8 | Dinero (tope 9.999.999) y medallas (un bit cada una, en `+4`). Bloque Misc del save (`0x21100`) | PKHeX (`Misc5`) + tracker (`badges` = `0x21A24`) | ✅ leído y escrito 27-oct (₽7188 → ₽8188, se conserva al guardar) |
 | Variable del buzón | — | — | Idea inicial para pasar mensajes al juego | — | ➖ ya no hace falta: los guiones propios (`S`) cubren ese uso |
 | `FieldStatus_GetReserveScript` | `0x0201936C` | código | Lee el guion reservado (`FieldStatus` + `0x12`, u16) | pokebw2 (B2 `0x02019340` + `0x2C`) | ✅ usado 27-oct (combates forzados) |
@@ -143,7 +144,7 @@ Qué objeto va en qué bolsillo: listas de PKHeX copiadas en `bag.py`.
 ```
 si el puntero o el nº de Pokémon no son válidos   → "unknown"   (no se escribe nada)
 si u16 en 0x021B5178 es 0x2100 o 0x2101          → "battle"
-si u8  en 0x0223B2F5 ≠ 0                          → "menu"
+si u8  en puntero + 0x365F1 ≠ 0                   → "menu"     (0x0223B2F5 en W2; 0x0223E3D5 en White2Upgrade)
 si no                                             → "map"
 ```
 
@@ -618,6 +619,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
+| `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
 | `python tools/sprites_gen5.py convertir --rom W2.nds --salida x.nds --especie 25 --nombre sylveon` | Pone ese sprite en lugar del de la especie 25, en una copia de la ROM: animado, o fijo con `--fijo` (necesita `pip install pillow`) |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
@@ -801,10 +803,19 @@ Objetivo: sprites para las especies de Gen 6-9 con el aspecto de Gen 5, **animad
 - El punto de apoyo del sprite está en los pies. Si la posición se calcula desde el centro del lienzo, el Pokémon queda en el aire.
 
 **Método** (`tools/sprites_gen5.py`):
-- Cada fotograma del GIF se corta en cuadritos de 8×8; los únicos van a la textura (caben 512).
-- Cada posición de la rejilla es un nodo: unos 50 por sprite, cuando los originales usan 10-20.
+- Cada fotograma del GIF se corta en piezas de 8×8 o de 16×16; las distintas van a la textura (caben 512 de 8×8 o 128
+  de 16×16).
+- Cada posición de la rejilla es un nodo: con 8×8 son 50-70 por sprite, con 16×16 unos 20, como los originales.
 - La animación de cada nodo elige qué cuadrito se ve en cada fotograma (elemento de tipo 0, solo índice).
-- Si los cuadritos no caben, se usa uno de cada 2, 3... fotogramas.
+- Si las piezas no caben, se usa uno de cada 2, 3... fotogramas.
+- **Tamaño de pieza:** el juego dibuja cada pieza 1 píxel más al fondo que la anterior (`*z -= 0x100` en `mcss.c`).
+  Con 50-70 piezas, cuando la cámara se acerca (captura, algunos ataques) las del fondo se desplazan y se ven cortes.
+  Con 16×16 son ~20 piezas y se nota menos (probado con Greninja), pero caben menos fotogramas.
+- `--bloque auto` (por defecto) usa 16×16 si así conserva al menos la mitad de los fotogramas y 8×8 con todos si no:
+  Greninja sale con 16 (10 de 20 fotogramas) y Sylveon con 8 (64 fotogramas; con 16 se quedaría en 16).
+- Si el GIF no se parece al PNG fijo (otra pose, como Greninja), se centra y se apoya por los pies.
+- Si la ROM está recortada (las de `ndstool` miden ~290 MB), se rellena hasta el tamaño de cartucho de la cabecera antes
+  de escribir al final.
 - La animación de la multi-celda tiene que durar el ciclo entero. Con 4 fotogramas, al repetirse reiniciaba los nodos y el
   sprite se quedaba quieto.
 
@@ -828,9 +839,65 @@ Pendiente:
 - Especies con más de 512 cuadritos (Incineroar, Necrozma), que pierden fotogramas.
 - El variocolor en el juego.
 - Combates dobles.
-- Usarlo con especies propias en vez de sustituir a otra. Hace falta una base con la Pokédex ampliada: White2Upgrade
-  (revisado el 06-nov) llega a la 721, pero sus sprites son fijos y su Pokédex del guardado no está ampliada (pisa
-  banderas a partir de la 673).
+- Las especies de Gen 6 de White2Upgrade (abajo): ya funciona con Greninja; falta convertir el resto y arreglar su
+  Pokédex del guardado.
+
+### White2Upgrade compilado (06-nov, probado en el juego)
+
+[White2Upgrade](https://github.com/ds-pokemon-hacking/White2Upgrade) (ds-pokemon-hacking, sin licencia: se compila, no se
+copia código) amplía W2 USA hasta la especie 721 (Gen 6), con 622 movimientos, 192 habilidades y el tipo Hada. Inyecta
+código con PMC/CTRMap: un overlay nuevo (344) y parches que se aplican al cargar cada overlay.
+
+**Compilarlo** (`tools/w2u_build/`): necesita Linux, así que se usa Docker.
+- `Dockerfile`: Ubuntu 24.04 con arm-none-eabi-gcc 13.2, Java, PyYAML, libpng y `ndstool` compilado desde su repositorio.
+- `build.sh`:
+  - vuelve a clonar White2Upgrade desde la copia local, porque en Windows queda con CRLF y `make` falla;
+  - usa la ROM como `IRDO.nds`;
+  - ejecuta `make tools`, `make base` y `make`;
+  - por último pasa `fix_arm9.py`.
+- Antes hay que bajar los submódulos con HTTPS (`git -c url."https://github.com/".insteadOf="git@github.com:" submodule
+  update --init`) y poner `tools/CTRMap/CTRMap.jar`. Se usó la versión del 2025-05-07, de la época del último commit de
+  White2Upgrade.
+
+```
+docker build -t w2u-build tools/w2u_build
+docker run --rm -v <White2Upgrade>:/src:ro -v <carpeta de la ROM>:/rom:ro -v <salida>:/out w2u-build
+```
+
+La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de archivo: `-e ROM_NAME=archivo.nds`.
+
+**El ARM9 queda marcado como comprimido (pantalla en blanco al arrancar).**
+- PMC sustituye el ARM9 por uno ya descomprimido (`0x9AC40` bytes), pero conserva `compressed_end = 0x020776CC` en los
+  parámetros del módulo.
+- Al arrancar, el juego "descomprime" código que no lo está y se queda en blanco.
+- `fix_arm9.py` pone ese campo a 0. Volt White 2 lo evita de otra forma: parchea `MIi_UncompressBackward`.
+- `rom_compare.py` también acepta ya ARM9 y overlays descomprimidos aunque la cabecera diga lo contrario.
+
+**Puente con White2Upgrade:**
+- `rom.py` lee 721 especies, 622 movimientos y 192 habilidades. Ejemplos: Chespin 650, Sylveon 700 (Hada), Volcanion 721;
+  Clefairy pasa a Hada.
+- Las 13 firmas del Lua coinciden (también en el juego), así que el combate, los guiones, los encuentros y el variocolor
+  funcionan igual.
+- **Indicador de menú:**
+  - PMC sube el inicio de la memoria dinámica (`OS_GetInitArenaLo`: `0x021FD0C0` → `0x022000C0`), y el puntero base pasa de
+    `0x02204D04` a `0x02207DE4`.
+  - El indicador se mueve lo mismo (`+0x30E0`) y queda en `0x0223E3D5`.
+  - El Lua ya no usa una dirección fija, sino puntero base + `0x365F1` (`menu_ptr_off`). En la ROM original da lo mismo que
+    antes (comprobado en los 9 volcados) y en White2Upgrade da la dirección correcta (validado con el menú abierto y cerrado).
+- Probado en el juego:
+  - combate salvaje forzado contra Greninja (658);
+  - lectura del combate (tipos Agua/Siniestro);
+  - captura y registro en la Pokédex.
+
+**Límites de White2Upgrade:**
+- La Pokédex del guardado no está ampliada: cada lista ocupa 84 bytes, es decir, 672 especies. Ver o capturar una especie
+  de la 673 a la 721 pisa otras banderas del guardado. Usar una copia del save.
+- Las habilidades de Gen 6 solo tienen el nombre.
+- Unos 19 movimientos de Gen 6 necesitan código que no tienen.
+- Las especies nuevas no tienen grito.
+- Sus sprites de Gen 6 son fijos (piezas genéricas) y quedan algo elevados.
+- `sprites_gen5.py` funciona igual sobre esta ROM, porque busca los sprites en `20 × especie`. Greninja con su GIF de
+  Showdown se ve animado y apoyado en el suelo.
 
 ## 7. API
 
@@ -1121,6 +1188,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 06-nov | **White2Upgrade compilado y probado** (`tools/w2u_build/`, Docker): arreglado el ARM9 marcado como comprimido (pantalla en blanco). Indicador de menú relativo al puntero base (`0x0223E3D5` en White2Upgrade). Greninja (658) en combate forzado, capturado y con su GIF de Showdown animado. `sprites_gen5.py`: piezas de 16×16 y `--bloque auto` (menos cortes al acercarse la cámara). |
 | 06-nov | **Sprites animados de Showdown en la ROM** (`tools/sprites_gen5.py`): cuadritos de 8×8 en la textura del combate y un nodo por posición. Validado en el juego con Sylveon: fijo, animado y apoyado en el suelo. Espacio: datos al final de la ROM, con la zona DSi de la cabecera (`0x90`/`0x92`) llevada al final, porque melonDS bloquea esa zona en modo DS. |
 | 06-nov | Límites desde la ROM: especies (hasta la que va antes de "Huevo"), movimientos, habilidades, objetos (nombres) y umbral de variocolor (`PML_UtilPIDIsRare`, arm9 descomprimido en `rom.py`). Lo usan `pk5`, `gift`, `effects`, `field_script`, `move_pp`, `set_shiny_odds` y `ram_tool`. `rom_compare.py` compara por dirección los overlays que se cargan en otro sitio. Volt White 2 Redux revisado: el puente es compatible (falta probarlo en el juego). |
 | 04-nov | Probado en vivo: registro correcto en dos combates (daño, PP, Restos, Tóxico, cambios, experiencia) y cambio del rival. Arreglos: `DAMAGE_PLURAL` lleva detrás los pokeID golpeados (el lector se perdía), bloques repetidos (se copiaban con el adaptador libre), Tóxico = "envenenamiento grave". Nuevo: eficacia, críticos, "no afecta", causa de cada cambio de vida y la vida tras cada golpe. |
@@ -1237,8 +1305,18 @@ Notas:
 - [x] Animado de frente y de espalda (combate y resumen), apoyado en el suelo.
 - [x] Datos al final de la ROM con `0x90`/`0x92` al final (en BizHawk).
 - [ ] Variocolor (un salvaje variocolor de la especie sustituida).
+- [x] En White2Upgrade, sobre su propia especie (Greninja, 658): frente animado y espalda fija, apoyados.
+- [x] Con 8×8 hay cortes breves al capturar; con 16×16 se notan menos.
 - [ ] Especie con más de 512 cuadritos (p. ej. Incineroar): se ve bien con menos fotogramas.
 - [ ] Combate doble con dos sprites animados.
+
+### White2Upgrade (en el juego)
+- [x] Arranca con el ARM9 arreglado; carga el save de W2 y el combate funciona.
+- [x] Puente: 721 especies, `data_ok`, modo `map`/`menu` correcto y las 13 firmas en `true`.
+- [x] Combate salvaje forzado contra Greninja; captura y registro en la Pokédex.
+- [ ] Regalo (`give_pokemon`) de una especie de Gen 6 al equipo y a la caja.
+- [ ] Registro de turnos y control del rival con una especie de Gen 6.
+- [ ] Arreglar la Pokédex del guardado (673-721) antes de usar esas especies.
 
 ### Volt White 2 Redux (en el juego)
 - [ ] Con `ROM_PATH` a Redux: el puente regenera `gen5_data.json` (`shiny_threshold` 128, Clefairy tipo 17).

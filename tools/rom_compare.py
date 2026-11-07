@@ -61,14 +61,25 @@ def load(path: str):
             f.seek(s)
             data = f.read(e - s)
             if flags >> 24 & 1:                    # overlay comprimido (BLZ, como el arm9)
-                data = blz_decompress(data)
+                data = _try_blz(data)
             overlays[oid] = (ram, size, data)
     mark = arm9.find(struct.pack("<II", 0xDEC00621, 0x2106C0DE))
     if mark >= 0:
         comp_end = struct.unpack_from("<I", arm9, mark - 0x1C + 0x14)[0]
-        if comp_end:
-            arm9 = blz_decompress(arm9[:comp_end - a9_ram]) + arm9[comp_end - a9_ram:]
+        if comp_end and comp_end - a9_ram <= len(arm9):
+            head = _try_blz(arm9[:comp_end - a9_ram])
+            if head is not arm9[:comp_end - a9_ram]:
+                arm9 = head + arm9[comp_end - a9_ram:]
     return code, crc, a9_ram, arm9, overlays
+
+
+def _try_blz(data: bytes) -> bytes:
+    """Descomprime si de verdad está comprimido. Algunos hacks (White2Upgrade con PMC, Volt White 2) guardan el arm9 o
+    los overlays ya descomprimidos aunque la cabecera o la tabla de overlays digan lo contrario: entonces se usa tal cual."""
+    try:
+        return blz_decompress(data)
+    except (IndexError, ValueError, struct.error):
+        return data
 
 
 def lua_sigs(game_code: str = "IRDO") -> dict:

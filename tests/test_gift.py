@@ -48,7 +48,7 @@ if SAME_MOVES:
     assert p[0x15] == 34
 p = gift.create(1, 5, TRAINER, moves=[33, 76], item=234, nature=3, rng=rng)
 assert gift.summary(p)["moves"] == ["Tackle", gift.DATA["moves"][76]] and gift.summary(p)["item"] == "Leftovers" and p[0x41] == 3
-for bad in [dict(species=0), dict(species=650), dict(level=0), dict(level=101), dict(moves=[33, 33]),
+for bad in [dict(species=0), dict(species=gamedata.max_species() + 1), dict(level=0), dict(level=101), dict(moves=[33, 33]),
             dict(moves=[1, 2, 3, 4, 5]), dict(item=9999), dict(species=29, gender="macho")]:
     args = {"species": 1, "level": 5, **bad}
     try:

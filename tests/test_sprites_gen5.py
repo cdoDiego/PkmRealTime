@@ -63,36 +63,43 @@ def read_anim(d):
     return seqs
 
 
-nanr, nmar = read_anim(files[5]), read_anim(files[7])
-assert nmar == [[(25, 0)]]                                   # la multi-celda dura el ciclo entero
-d = files[6]; b = d.find(b"KBCM") + 8
-n, _, off_mc, off_hier = struct.unpack_from("<HHII", d, b)
-nn, nca, off_h = struct.unpack_from("<HHI", d, b + off_mc)
-nodes = [struct.unpack_from("<HhhH", d, b + off_hier + off_h + 8 * k) for k in range(nn)]
-assert n == 1 and nn == nca == len(nanr) and all(attr >> 8 == k for k, (_, _, _, attr) in enumerate(nodes))
-count, w, h, ox, oy = struct.unpack_from("<IHHhh", files[8], 0)
-assert count == info["tiles"] and len(files[8]) == 12 + 48 * count + 4 and (w, h) == (21 + 7, 32 + 7)
-tex = sg.ncgr_pixels(files[2]); tex = [(tex[i // 2] >> (4 * (i & 1))) & 15 for i in range(len(tex) * 2)]
-assert files[4][:4] == b"RECN" and struct.unpack_from("<H", files[4], 0x18)[0] == count
-# 96x96 (pantallas 2D) = primer fotograma
-p0 = sg.ncgr_pixels(files[0]); assert [(p0[i // 2] >> (4 * (i & 1))) & 15 for i in range(9216)] == sg.tiled96(frames[0])
+for block in (8, 16):
+    files, info = sg.side_files(templates, frames, durs, block)
+    assert info["tiles"] <= sg.capacity(block)
+    nanr, nmar = read_anim(files[5]), read_anim(files[7])
+    assert nmar == [[(25, 0)]]                                   # la multi-celda dura el ciclo entero
+    d = files[6]; b = d.find(b"KBCM") + 8
+    n, _, off_mc, off_hier = struct.unpack_from("<HHII", d, b)
+    nn, nca, off_h = struct.unpack_from("<HHI", d, b + off_mc)
+    nodes = [struct.unpack_from("<HhhH", d, b + off_hier + off_h + 8 * k) for k in range(nn)]
+    assert n == 1 and nn == nca == len(nanr) and all(attr >> 8 == k for k, (_, _, _, attr) in enumerate(nodes))
+    count, w, h, ox, oy = struct.unpack_from("<IHHhh", files[8], 0)
+    assert count == info["tiles"] and len(files[8]) == 12 + 48 * count + 4 and (w, h) == (21 + 7, 32 + 7)
+    tex = sg.ncgr_pixels(files[2]); tex = [(tex[i // 2] >> (4 * (i & 1))) & 15 for i in range(len(tex) * 2)]
+    assert files[4][:4] == b"RECN" and struct.unpack_from("<H", files[4], 0x18)[0] == count
+    # 96x96 (pantallas 2D) = primer fotograma
+    p0 = sg.ncgr_pixels(files[0]); assert [(p0[i // 2] >> (4 * (i & 1))) & 15 for i in range(9216)] == sg.tiled96(frames[0])
 
-feet = 75
-for f, start in enumerate((0, 6, 12, 19)):
-    for tick in (start, start + 5):
-        out = [0] * 9216
-        for (seq, x, y, attr) in nodes:
-            acc = 0
-            for dur, idx in nanr[attr >> 8]:
-                if acc + dur > tick:
-                    break
-                acc += dur
-            q = struct.unpack_from("<6i", files[8], 12 + 48 * idx)
-            s0, t0 = q[4] // sg.FX, q[5] // sg.FX
-            for yy in range(8):
-                for xx in range(8):
-                    out[(y + feet + 1 + yy) * 96 + x + 48 + xx] = tex[(t0 + yy) * 256 + s0 + xx]
-        assert out == frames[f], (f, tick)
+    feet = 75
+    for f, start in enumerate((0, 6, 12, 19)):
+        for tick in (start, start + 5):
+            out = [0] * 9216
+            for (seq, x, y, attr) in nodes:
+                acc = 0
+                for dur, idx in nanr[attr >> 8]:
+                    if acc + dur > tick:
+                        break
+                    acc += dur
+                q = struct.unpack_from("<6i", files[8], 12 + 48 * idx)
+                s0, t0 = q[4] // sg.FX, q[5] // sg.FX
+                for yy in range(block):
+                    for xx in range(block):
+                        out[(y + feet + 1 + yy) * 96 + x + 48 + xx] = tex[(t0 + yy) * 256 + s0 + xx]
+            assert out == frames[f], (f, tick)
+
+
+# auto: con pocos cuadritos distintos elige 16 (menos piezas)
+assert sg.side_files(templates, frames, durs, "auto")[1]["block"] == 16
 
 # demasiados cuadritos: se usan menos fotogramas
 noisy = [[rng.randrange(1, 16) if 20 <= i % 96 < 76 and 20 <= i // 96 < 76 else 0 for i in range(9216)] for _ in range(20)]

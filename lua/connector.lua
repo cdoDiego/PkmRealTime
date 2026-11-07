@@ -35,9 +35,11 @@ local BATTLER_SIZE = 0x160            -- bytes que se envían de cada combatient
 
 -- Direcciones que cambian según el juego (código del cartucho). Solo se escribe en juegos de esta lista.
 --   battle: u16, 0x2100/0x2101 = en combate
---   menu:   u8, 0 = caminando libre; 1 = menú, diálogo, equipo, mochila, combate
+--   menu:   u8, 0 = caminando libre; 1 = menú, diálogo, equipo, mochila, combate. Va en el mismo bloque que el puntero
+--           base (0x02000024), así que se guarda como desplazamiento: White2Upgrade (PMC) mueve la memoria dinámica
+--           y con ella el indicador (0x0223E3D5 allí; 0x0223B2F5 en la original, con el puntero en 0x02204D04)
 local GAMES = {
-  IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu = 0x0223B2F5,
+  IRDO = { name = "White 2 (USA/Europa)", battle = 0x021B5178, menu_ptr_off = 0x365F1,
            adapters = 0x021DD8AC, client_proc = 0x021B1A15,     -- combate: sAdapters y función del cliente (B2 + 0x40)
            check_fainted = 0x021A8A64,                          -- ServerControl_CheckFainted (B2 + 0x40)
            reserve_get = 0x0201936C,                            -- FieldStatus_GetReserveScript (B2 + 0x2C)
@@ -176,7 +178,9 @@ local function game_mode(game, party_addr)
   if game == nil or party_addr == nil then return "unknown" end
   local bs = memory.read_u16_le(off(game.battle), DOMAIN)
   if bs == 0x2100 or bs == 0x2101 then return "battle" end
-  if memory.read_u8(off(game.menu), DOMAIN) ~= 0 then return "menu" end
+  if game.menu_ptr_off == nil then return "unknown" end       -- juego sin la dirección del menú (p. ej. Black 2)
+  local ptr = party_addr - BASE - PARTY_PTR_OFF               -- puntero base (party_location le suma PARTY_PTR_OFF)
+  if memory.read_u8(ptr + game.menu_ptr_off, DOMAIN) ~= 0 then return "menu" end
   return "map"
 end
 

@@ -47,7 +47,7 @@ BAG_PTR_OFF = 0x18D20        # mochila = puntero + esto (sin cifrar; 0x998 bytes
 
 MAILBOX_VAR_ADDR = 0x0       # TODO variable de script para el buzón (no está en el tracker; aún no se usa)
 
-MENU_FLAG_ADDR = 0x0223B2F5  # u8: 0 = caminando libre; 1 = menú/diálogo/equipo/datos/mochila/combate
+MENU_FLAG_ADDR = 0x0223B2F5  # (el Lua usa puntero base + 0x365F1: en White2Upgrade está en 0x0223E3D5) u8: 0 = caminando libre; 1 = menú/diálogo/equipo/datos/mochila/combate
 # Encontrado con ram_tool.py diff + watch_ram.lua (2026-10-26). Puntero en esa prueba: 0x02204D04
 # (puntero+0x365F1). Sigue funcionando tras reiniciar el juego (validado 26-oct).
 

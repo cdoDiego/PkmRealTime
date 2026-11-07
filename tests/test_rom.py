@@ -28,8 +28,9 @@ assert sp["1"]["name"] == "Bulbasaur" and sp["29"]["name"] == "Nidoran♀" and s
 if r.header_crc == 0xD75C:   # White 2 original; un randomizer o un hack cambian habilidades y movimientos
     assert sp["501"]["abilities"][0] == 67 and sp["501"]["learnset"][:2] == [[1, 33], [5, 39]]
 assert d["move_pp"][33] == 35 and d["exp"][0][99] == 1000000 and d["exp"][5][99] == 1250000
-assert len(sp) == 649 and len(d["moves"]) == len(d["move_pp"]) == 560
+assert len(sp) >= 649 and len(d["moves"]) == len(d["move_pp"]) >= 560     # más en ROM ampliadas (White2Upgrade: 721)
 if r.header_crc == 0xD75C:
+    assert len(sp) == 649 and len(d["moves"]) == 560
     assert d["shiny_threshold"] == 8                 # 1/8192, leído del código (PML_UtilPIDIsRare)
 
 # ROM "aleatorizada" simulada: se cambia una copia en memoria (el archivo no se toca)

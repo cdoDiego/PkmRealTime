@@ -6,6 +6,7 @@ Necesita Pillow (solo esta herramienta):  pip install pillow
       baja a sprites_showdown/ los GIF animados (gen5ani: frente, espalda y variocolor) y los PNG fijos (gen5)
   python tools/sprites_gen5.py convertir --rom W2.nds --salida prueba.nds --especie 25 --nombre sylveon
       pone el sprite de Sylveon en lugar del de la especie 25 (Pikachu); --fijo usa solo los PNG
+      --bloque auto|8|16: tamaño de las piezas (auto: 16 si conserva al menos la mitad de los fotogramas; menos cortes)
 
 Cómo funciona (validado en el juego el 06-nov, ver DOCUMENTACION.md "Sprites de especies nuevas"):
 - El combate dibuja cada sprite (MCSS, src/system/mcss.c de la decomp) con rectángulos de una textura de 256x128 a 4
@@ -31,7 +32,7 @@ import rom
 
 SPRITES = "a/0/0/4"            # 20 archivos por especie
 FILES_PER_SPECIES = 20
-TILES_MAX = 512                # cuadritos de 8x8 en la textura de 256x128
+TILES_MAX = 512                # cuadritos de 8x8 en la textura de 256x128 (con --bloque 16: 128 de 16x16)
 FX = 4096                      # fx32: 1.0
 CACHE = os.path.join(ROOT, "sprites_showdown")
 SHOWDOWN = "https://play.pokemonshowdown.com/sprites/"
@@ -199,7 +200,16 @@ def find_offset(frames, static_png):
                     and st[x + ox, y + oy][:3] == fp[x, y][:3])
             if m > best[0]:
                 best = (m, ox, oy)
-    return best[0] / max(1, len(opaque)), best[1], best[2]
+    ratio = best[0] / max(1, len(opaque))
+    if ratio >= 0.5:
+        return ratio, best[1], best[2]
+    # El GIF no se parece al fijo (otra pose, p. ej. Greninja): si ya es de 96x96 va tal cual; si no, centrado en
+    # horizontal y con los pies a la altura de los del fijo.
+    if (w, h) == (96, 96):
+        return ratio, 0, 0
+    st_feet = max((y for y in range(96) for x in range(96) if st[x, y][3]), default=80)
+    gif_feet = max(y for x, y in opaque) if opaque else h - 1
+    return ratio, (96 - w) // 2, st_feet - gif_feet
 
 
 def on_canvas(frames, ox, oy):
@@ -247,13 +257,18 @@ def ds_durations(ms_list):
     return out
 
 
-def tile_grid(frames_idx):
+def capacity(block: int = 8) -> int:
+    return (256 // block) * (128 // block)
+
+
+def tile_grid(frames_idx, block: int = 8):
     """Cuadritos únicos (0 = vacío) y, por cada posición de la rejilla con dibujo, qué cuadrito tiene en cada fotograma."""
-    tiles, grid = {bytes(64): 0}, {}
+    tiles, grid = {bytes(block * block): 0}, {}
+    n = 96 // block
     for f, px in enumerate(frames_idx):
-        for gy in range(12):
-            for gx in range(12):
-                t = bytes(px[(gy * 8 + y) * 96 + gx * 8 + x] for y in range(8) for x in range(8))
+        for gy in range(n):
+            for gx in range(n):
+                t = bytes(px[(gy * block + y) * 96 + gx * block + x] for y in range(block) for x in range(block))
                 if t not in tiles:
                     tiles[t] = len(tiles)
                 grid.setdefault((gx, gy), [0] * len(frames_idx))[f] = tiles[t]
@@ -261,7 +276,7 @@ def tile_grid(frames_idx):
     return tiles, nodes
 
 
-def fit_frames(frames_idx, durs):
+def fit_frames(frames_idx, durs, block: int = 8):
     """Junta fotogramas iguales seguidos y, si los cuadritos no caben en la textura, usa uno de cada 2, 3..."""
     merged = []
     for px, d in zip(frames_idx, durs):
@@ -274,18 +289,19 @@ def fit_frames(frames_idx, durs):
     while True:
         sub = list(range(0, len(frames_idx), step))
         f2, d2 = [frames_idx[i] for i in sub], [sum(durs[i:i + step]) for i in sub]
-        tiles, nodes = tile_grid(f2)
-        if len(tiles) <= TILES_MAX:
+        tiles, nodes = tile_grid(f2, block)
+        if len(tiles) <= capacity(block):
             return f2, d2, tiles, nodes, step
         step += 1
 
 
-def texture(tiles) -> list:
+def texture(tiles, block: int = 8) -> list:
     px = [0] * (256 * 128)
+    per_row = 256 // block
     for t, i in tiles.items():
-        tx, ty = (i % 32) * 8, (i // 32) * 8
-        for y in range(8):
-            px[(ty + y) * 256 + tx:(ty + y) * 256 + tx + 8] = list(t[y * 8:y * 8 + 8])
+        tx, ty = (i % per_row) * block, (i // per_row) * block
+        for y in range(block):
+            px[(ty + y) * 256 + tx:(ty + y) * 256 + tx + block] = list(t[y * block:(y + 1) * block])
     return px
 
 
@@ -352,7 +368,7 @@ def make_ncer(n) -> bytes:
     return _nitro(b"RECN", [_block(b"KBEC", head + cells + oams), _labels(), _uext()])
 
 
-def make_bin(n, frames_idx) -> bytes:
+def make_bin(n, frames_idx, block: int = 8) -> bytes:
     """Archivo bin de MCSS: tamaño y desplazamiento del dibujo (como los originales: +7 y casi centrado) y un rectángulo
     de 8x8 de la textura por celda."""
     xs = [i % 96 for px in frames_idx for i, v in enumerate(px) if v]
@@ -361,14 +377,23 @@ def make_bin(n, frames_idx) -> bytes:
     ox, oy = round((min(xs) + max(xs)) / 2 - 48 + 2), round(1.5 - ((min(ys) + max(ys)) / 2 - 48))
     out = struct.pack("<IHHhh", n, w, h, ox, oy)
     for i in range(n):
-        s, t = (i % 32) * 8, (i // 32) * 8
-        out += struct.pack("<6i", 0, 0, 8 * FX, 8 * FX, s * FX, t * FX) + bytes(24)
+        s, t = (i % (256 // block)) * block, (i // (256 // block)) * block
+        out += struct.pack("<6i", 0, 0, block * FX, block * FX, s * FX, t * FX) + bytes(24)
     return out + bytes(4)            # cola: sin nodos "idle"
 
 
-def side_files(templates, frames_idx, durs):
-    """Los 9 archivos de una vista (frente o espalda) a partir de sus fotogramas ya en índices de paleta."""
-    frames_idx, durs, tiles, nodes, step = fit_frames(frames_idx, durs)
+def side_files(templates, frames_idx, durs, block=8):
+    """Los 9 archivos de una vista (frente o espalda) a partir de sus fotogramas ya en índices de paleta.
+    block: tamaño de cada pieza. Con 8 caben todos los fotogramas, pero salen 50-70 piezas por sprite; el juego dibuja cada
+    una 1 píxel más al fondo (mcss.c) y, cuando la cámara se acerca (captura, algunos ataques), se ven cortes. Con 16 son
+    ~20 piezas, como los originales, a cambio de usar menos fotogramas. "auto": 16 si así se conserva al menos la mitad
+    de los fotogramas (como Greninja); si no, 8 con todos."""
+    if block == "auto":
+        f16 = fit_frames(frames_idx, durs, 16)
+        block = 16 if f16[4] <= 2 else 8
+        frames_idx, durs, tiles, nodes, step = f16 if block == 16 else fit_frames(frames_idx, durs, 8)
+    else:
+        frames_idx, durs, tiles, nodes, step = fit_frames(frames_idx, durs, block)
     feet = max(i // 96 for px in frames_idx for i, v in enumerate(px) if v)       # fila de los pies = punto de apoyo
     sequences = []
     for _, seq in nodes:
@@ -379,11 +404,12 @@ def side_files(templates, frames_idx, durs):
             else:
                 s.append((d, idx))
         sequences.append(s)
-    nodes_xy = [(gx * 8 - 48, gy * 8 - (feet + 1)) for (gx, gy), _ in nodes]
-    files = [ncgr_replace(templates[0], tiled96(frames_idx[0])), b"", ncgr_replace(templates[2], texture(tiles)), b"",
+    nodes_xy = [(gx * block - 48, gy * block - (feet + 1)) for (gx, gy), _ in nodes]
+    files = [ncgr_replace(templates[0], tiled96(frames_idx[0])), b"", ncgr_replace(templates[2], texture(tiles, block)), b"",
              make_ncer(len(tiles)), make_nanr(sequences), make_nmcr(nodes_xy), make_nmar(sum(durs)),
-             make_bin(len(tiles), frames_idx)]
-    info = {"frames": len(frames_idx), "step": step, "tiles": len(tiles), "nodes": len(nodes), "ticks": sum(durs)}
+             make_bin(len(tiles), frames_idx, block)]
+    info = {"frames": len(frames_idx), "step": step, "tiles": len(tiles), "nodes": len(nodes), "ticks": sum(durs),
+            "block": block}
     return files, info
 
 
@@ -425,8 +451,11 @@ def write_file(data: bytearray, r: "rom.Rom", path: str, content: bytes) -> str:
     used = max(struct.unpack_from("<I", data, fat + 8 * i + 4)[0] for i in range(nfiles))
     used = max(used, struct.unpack_from("<I", data, 0x80)[0], struct.unpack_from("<I", data, 0x210)[0])
     new = (used + 0x1FF) & ~0x1FF
-    if new + len(content) > len(data):
+    capacity = 0x20000 << data[0x14]                         # tamaño del cartucho según la cabecera (512 MB en B2/W2)
+    if new + len(content) > capacity:
         raise ValueError("no cabe en la ROM")
+    if new + len(content) > len(data):                       # ROM recortada (p. ej. la que genera ndstool): se rellena
+        data.extend(b"\xff" * (capacity - len(data)))
     data[new:new + len(content)] = content
     struct.pack_into("<II", data, fat + 8 * fid, new, new + len(content))
     units = len(data) // 0x80000
@@ -435,7 +464,8 @@ def write_file(data: bytearray, r: "rom.Rom", path: str, content: bytes) -> str:
     return f"al final ({new:#x}); zona DSi movida al final de la ROM"
 
 
-def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, static: bool = False, log=print) -> dict:
+def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, static: bool = False, log=print,
+            block="auto") -> dict:
     r = rom.Rom(rom_path)
     files = r.narc(SPRITES)
     base = species * FILES_PER_SPECIES
@@ -457,12 +487,12 @@ def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, 
     new, info = list(files), {}
     for side, (frames, _) in views.items():
         files_side, info[side] = side_files(files[base + side:base + side + 9], [to_idx(px) for px, _ in frames],
-                                            ds_durations([ms for _, ms in frames]))
+                                            ds_durations([ms for _, ms in frames]), block)
         new[base + side:base + side + 9] = files_side
         i = info[side]
         log(f"  {'frente' if side == 0 else 'espalda'}: {i['frames']} fotogramas"
             + (f" (uno de cada {i['step']})" if i["step"] > 1 else "")
-            + f", {i['tiles']}/{TILES_MAX} cuadritos, {i['nodes']} nodos, ciclo de {i['ticks']} fotogramas del DS")
+            + f", {i['tiles']}/{capacity(i['block'])} bloques de {i['block']}x{i['block']}, {i['nodes']} piezas, ciclo de {i['ticks']} fotogramas del DS")
     new[base + 18] = nclr_replace(files[base + 18], normal)
     new[base + 19] = nclr_replace(files[base + 19], rare)
     data = bytearray(r.data)
@@ -498,6 +528,9 @@ def main() -> None:
     c.add_argument("--especie", type=int, required=True, help="nº de la especie cuyo sprite se reemplaza")
     c.add_argument("--nombre", required=True, help="nombre en Showdown (sylveon, tapukoko...)")
     c.add_argument("--carpeta", default=CACHE); c.add_argument("--fijo", action="store_true", help="sin animación")
+    c.add_argument("--bloque", choices=("auto", "8", "16"), default="auto",
+                   help="tamaño de las piezas: 8 = todos los fotogramas; 16 = menos piezas (menos cortes con la cámara cerca);"
+                        " auto (por defecto) = 16 si conserva al menos la mitad de los fotogramas")
     a = ap.parse_args()
     if a.cmd == "descargar":
         for n in a.nombre:
@@ -505,7 +538,7 @@ def main() -> None:
     else:
         if os.path.abspath(a.rom) == os.path.abspath(a.salida):
             raise SystemExit("la salida tiene que ser otro archivo (la ROM original no se toca)")
-        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo)
+        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo, block=a.bloque if a.bloque == "auto" else int(a.bloque))
 
 
 if __name__ == "__main__":
