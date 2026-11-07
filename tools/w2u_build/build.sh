@@ -2,6 +2,7 @@
 # Compila White2Upgrade dentro del contenedor.
 #   /src  = tu copia de White2Upgrade (solo lectura; se clona de nuevo para tener finales de línea de Linux)
 #   /rom  = carpeta con la ROM de White 2 USA (IRDO)
+#   /patches = (opcional) parches .cpp propios que se añaden a src/
 #   /out  = donde se deja White2Upgrade.nds (con el ARM9 marcado como no comprimido: si no, se queda en blanco)
 # Ver docs/DOCUMENTACION.md, "White2Upgrade compilado".
 set -e
@@ -22,6 +23,10 @@ for m in swan extlib NitroKernel; do
     rm -rf "include/$m"
     git -c core.autocrlf=false clone -q "/src/include/$m" "include/$m"
 done
+# Parches propios (tools/w2u_build/patches, montado en /patches): se compilan junto al código de White2Upgrade
+if [ -d /patches ]; then
+    for f in /patches/*.cpp; do [ -f "$f" ] && cp "$f" src/ && echo "[w2u] parche: $(basename "$f")"; done
+fi
 mkdir -p tools/CTRMap
 cp /src/tools/CTRMap/CTRMap.jar tools/CTRMap/
 cp "$ROM" IRDO.nds
@@ -30,4 +35,5 @@ echo "[w2u] extraer la ROM";    make base
 echo "[w2u] compilar";          make -j"$(nproc)"
 echo "[w2u] ARM9 sin comprimir"; python3 /fix_arm9.py White2Upgrade.nds
 cp White2Upgrade.nds /out/White2Upgrade.nds
+cp White2Upgrade_DEBUG.txt /out/White2Upgrade_DEBUG.txt 2>/dev/null || true   # volcado del módulo: qué parches entraron
 echo "[w2u] listo: /out/White2Upgrade.nds"

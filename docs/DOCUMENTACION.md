@@ -839,8 +839,8 @@ Pendiente:
 - Especies con más de 512 cuadritos (Incineroar, Necrozma), que pierden fotogramas.
 - El variocolor en el juego.
 - Combates dobles.
-- Las especies de Gen 6 de White2Upgrade (abajo): ya funciona con Greninja; falta convertir el resto y arreglar su
-  Pokédex del guardado.
+- Las especies de Gen 6 de White2Upgrade (abajo): ya funciona con Greninja; falta convertir el resto. Su Pokédex del
+  guardado ya está protegida.
 
 ### White2Upgrade compilado (06-nov, probado en el juego)
 
@@ -861,7 +861,7 @@ código con PMC/CTRMap: un overlay nuevo (344) y parches que se aplican al carga
 
 ```
 docker build -t w2u-build tools/w2u_build
-docker run --rm -v <White2Upgrade>:/src:ro -v <carpeta de la ROM>:/rom:ro -v <salida>:/out w2u-build
+docker run --rm -v <White2Upgrade>:/src:ro -v <carpeta de la ROM>:/rom:ro \n    -v <repo>/tools/w2u_build/patches:/patches:ro -v <salida>:/out w2u-build
 ```
 
 La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de archivo: `-e ROM_NAME=archivo.nds`.
@@ -889,9 +889,24 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
   - lectura del combate (tipos Agua/Siniestro);
   - captura y registro en la Pokédex.
 
+**Pokédex del guardado (protección, `tools/w2u_build/patches/dex_limit.cpp`):**
+- El bloque de la Pokédex (`0x36`, en el save `0x21400`, `0x4DC` bytes) tiene listas de `0x54` bytes, que dan para 672
+  especies. Sin protección, ver o capturar una especie de la 673 a la 721 escribe en la lista de al lado.
+- No se puede agrandar el bloque. Los bloques se colocan seguidos, alineados a `0x100` (`gfl/savedata.c`), y a este le sobran
+  20 bytes: agrandarlo movería todos los demás.
+- **Arreglo:** `PokeDex_RegistPkm`, `addPkmToDex`, `PokeDex_IsSeen` e `IsCaught` empiezan comprobando la especie con
+  `PML_PkmIsBadMonsNo`. El parche desvía solo esa llamada (`THUMB_BRANCH_LINK_<función>_<desplazamiento>`, en `+0x6C`,
+  `+0x76`, `+0x8` y `+0x8`) para que, ahí, las especies de la 673 en adelante cuenten como no válidas: no se apuntan, y las
+  lecturas dicen "no".
+- No copia código de la decomp (GPL-3.0). `build.sh` añade los `.cpp` de `patches/` al compilar (`-v .../patches:/patches:ro`).
+- Validado en el juego: en RAM la Pokédex está en puntero + `0x920` + `0x21400`, con la marca `0xBEEFCAFE`. Tras ver a
+  Sylveon (700), huir, volver a verlo y capturarlo con la pantalla de "registrado", el bloque tiene **0 bytes distintos**.
+  Sin el parche, la captura habría escrito en `0x05F` (lista de vistos).
+- Efecto: las especies 673-721 se ven, se capturan y se usan, pero la Pokédex no las cuenta.
+- Pendiente (opcional): guardarlas de verdad en `ExtraBlock20`, un bloque extra de 200 bytes que el juego nunca usa (llega
+  hasta Gen 7). Habría que desviar también la carga y el guardado.
+
 **Límites de White2Upgrade:**
-- La Pokédex del guardado no está ampliada: cada lista ocupa 84 bytes, es decir, 672 especies. Ver o capturar una especie
-  de la 673 a la 721 pisa otras banderas del guardado. Usar una copia del save.
 - Las habilidades de Gen 6 solo tienen el nombre.
 - Unos 19 movimientos de Gen 6 necesitan código que no tienen.
 - Las especies nuevas no tienen grito.
@@ -1188,6 +1203,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 06-nov | **Pokédex de White2Upgrade protegida** (`tools/w2u_build/patches/dex_limit.cpp`): las especies 673-721 ya no pisan el guardado (desvío de `PML_PkmIsBadMonsNo` en 4 funciones). Validado con Sylveon: 0 bytes distintos en el bloque tras verlo y capturarlo. `build.sh` aplica los parches de `patches/` y saca el volcado del módulo. |
 | 06-nov | **White2Upgrade compilado y probado** (`tools/w2u_build/`, Docker): arreglado el ARM9 marcado como comprimido (pantalla en blanco). Indicador de menú relativo al puntero base (`0x0223E3D5` en White2Upgrade). Greninja (658) en combate forzado, capturado y con su GIF de Showdown animado. `sprites_gen5.py`: piezas de 16×16 y `--bloque auto` (menos cortes al acercarse la cámara). |
 | 06-nov | **Sprites animados de Showdown en la ROM** (`tools/sprites_gen5.py`): cuadritos de 8×8 en la textura del combate y un nodo por posición. Validado en el juego con Sylveon: fijo, animado y apoyado en el suelo. Espacio: datos al final de la ROM, con la zona DSi de la cabecera (`0x90`/`0x92`) llevada al final, porque melonDS bloquea esa zona en modo DS. |
 | 06-nov | Límites desde la ROM: especies (hasta la que va antes de "Huevo"), movimientos, habilidades, objetos (nombres) y umbral de variocolor (`PML_UtilPIDIsRare`, arm9 descomprimido en `rom.py`). Lo usan `pk5`, `gift`, `effects`, `field_script`, `move_pp`, `set_shiny_odds` y `ram_tool`. `rom_compare.py` compara por dirección los overlays que se cargan en otro sitio. Volt White 2 Redux revisado: el puente es compatible (falta probarlo en el juego). |
@@ -1316,7 +1332,8 @@ Notas:
 - [x] Combate salvaje forzado contra Greninja; captura y registro en la Pokédex.
 - [ ] Regalo (`give_pokemon`) de una especie de Gen 6 al equipo y a la caja.
 - [ ] Registro de turnos y control del rival con una especie de Gen 6.
-- [ ] Arreglar la Pokédex del guardado (673-721) antes de usar esas especies.
+- [x] Protección de la Pokédex (673-721): Sylveon visto y capturado sin tocar ningún byte del bloque.
+- [ ] Pokédex completa para 673-721 (bloque extra), si hace falta.
 
 ### Volt White 2 Redux (en el juego)
 - [ ] Con `ROM_PATH` a Redux: el puente regenera `gen5_data.json` (`shiny_threshold` 128, Clefairy tipo 17).
