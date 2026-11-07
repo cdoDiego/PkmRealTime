@@ -620,6 +620,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
+| `python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida Gen6.nds --desde 650 --hasta 721` | Todas las especies del rango con su nombre de la ROM: baja de Showdown lo que falte y escribe la ROM una vez |
 | `python tools/sprites_gen5.py convertir --rom W2.nds --salida x.nds --especie 25 --nombre sylveon` | Pone ese sprite en lugar del de la especie 25, en una copia de la ROM: animado, o fijo con `--fijo` (necesita `pip install pillow`) |
 
 ### Cómo buscar una dirección nueva (método que usamos para el menú)
@@ -813,6 +814,12 @@ Objetivo: sprites para las especies de Gen 6-9 con el aspecto de Gen 5, **animad
   Con 16×16 son ~20 piezas y se nota menos (probado con Greninja), pero caben menos fotogramas.
 - `--bloque auto` (por defecto) usa 16×16 si así conserva al menos la mitad de los fotogramas y 8×8 con todos si no:
   Greninja sale con 16 (10 de 20 fotogramas) y Sylveon con 8 (64 fotogramas; con 16 se quedaría en 16).
+- **Los cortes se arreglan de raíz con el parche de profundidad de White2Upgrade** (`patches/mcss_depth.cpp`, ver
+  "White2Upgrade compilado"): Yveltal (120 piezas) y Talonflame (112) se ven sin cortes al capturar y con ataques.
+  Para que el parche las reconozca, cada pieza lleva `x` = 1/4096 de píxel (`PIECE_MARK`, invisible; en los 649 originales
+  el byte bajo de `x` e `y` siempre es 0, comprobado en los 15 828 rectángulos). En ROMs sin el parche siguen los cortes.
+- **Modo lote:** `lote --desde 650 --hasta 721` toma los nombres de la ROM (`Flabébé` → `flabebe`), baja lo que falte y
+  escribe la ROM una sola vez. Las especies sin GIF quedan fijas; las que no tienen los 4 PNG se saltan.
 - Si el GIF no se parece al PNG fijo (otra pose, como Greninja), se centra y se apoya por los pies.
 - Si la ROM está recortada (las de `ndstool` miden ~290 MB), se rellena hasta el tamaño de cartucho de la cabecera antes
   de escribir al final.
@@ -839,8 +846,11 @@ Pendiente:
 - Especies con más de 512 cuadritos (Incineroar, Necrozma), que pierden fotogramas.
 - El variocolor en el juego.
 - Combates dobles.
-- Las especies de Gen 6 de White2Upgrade (abajo): ya funciona con Greninja; falta convertir el resto. Su Pokédex del
-  guardado ya está protegida.
+- **Animaciones largas con pausas** (07-nov, visto en el juego): si los cuadritos distintos no caben en la textura, se usa
+  uno de cada N fotogramas y cada uno dura N veces más. Peores: Volcanion (1 de 12), Klefki (1 de 9), Zygarde y Tyrantrum
+  (1 de 8). Ideas: mover piezas con desplazamiento por fotograma (elemento de tipo 2 en la animación) para reutilizar
+  cuadritos cuando el cuerpo solo sube y baja; usar un tramo seguido que cierre bien (bucle corto); juntar cuadritos casi
+  iguales; o reducir a la mitad y dibujar al doble (pierde detalle de pixel art).
 
 ### White2Upgrade compilado (06-nov, probado en el juego)
 
@@ -906,13 +916,24 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
 - Pendiente (opcional): guardarlas de verdad en `ExtraBlock20`, un bloque extra de 200 bytes que el juego nunca usa (llega
   hasta Gen 7). Habría que desviar también la carga y el guardado.
 
+**Profundidad de las piezas (parche, `tools/w2u_build/patches/mcss_depth.cpp`, 07-nov):**
+- `MCSS_DrawQuad` deja cada pieza 1 píxel más al fondo que la anterior (`*z -= 0x100`). En los originales (máx. 29 piezas
+  que se solapan) eso ordena las partes; en una rejilla de 120 piezas la última queda 120 píxeles atrás y, al acercarse la
+  cámara, la perspectiva separa las filas en franjas.
+- El parche desvía las 3 llamadas de `MCSSSys_Draw` a `MCSS_DrawQuad` (`+0x7A4`, `+0x7DA`, `+0x836`): llama a la original
+  y, si la pieza lleva la marca de `sprites_gen5.py` (byte bajo de `x` = `0x01`), deja la profundidad como estaba.
+- White2Upgrade no nombra esas funciones: `patches/mcss.esdb.yml` las añade a `pmc/ESDB.yml` al compilar (direcciones del
+  archivo de símbolos de la decomp para W2 USA; el código es idéntico en el ARM9 de PMC). El ARM9 empieza en `0x02004000`.
+- Los enganches se aplican al arrancar (el ARM9 del archivo no cambia); el registro de compilación muestra
+  `Created automated hook ... THUMB_BRANCH_LINK_MCSSSys_Draw_0x7a4 to ARM9:201a3dc`.
+- Validado en el juego: Yveltal y Talonflame sin cortes al capturar y con ataques; Snivy y los salvajes de Gen 5, iguales.
+
 **Límites de White2Upgrade:**
 - Las habilidades de Gen 6 solo tienen el nombre.
 - Unos 19 movimientos de Gen 6 necesitan código que no tienen.
 - Las especies nuevas no tienen grito.
-- Sus sprites de Gen 6 son fijos (piezas genéricas) y quedan algo elevados.
-- `sprites_gen5.py` funciona igual sobre esta ROM, porque busca los sprites en `20 × especie`. Greninja con su GIF de
-  Showdown se ve animado y apoyado en el suelo.
+- Sus sprites de Gen 6 son fijos (piezas genéricas) y quedan algo elevados. `sprites_gen5.py lote --desde 650 --hasta 721`
+  los sustituye por los de Showdown: 52 animados y 20 fijos (los que no tienen GIF), todos apoyados en el suelo.
 
 ## 7. API
 
@@ -1203,6 +1224,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 07-nov | **Sprites de Gen 6 completos y sin cortes**: `sprites_gen5.py lote` convierte 650-721 de una vez (52 animados, 20 fijos). Parche `mcss_depth.cpp` (+ `mcss.esdb.yml`, símbolos que White2Upgrade no nombra): las piezas marcadas no se van al fondo, así que Yveltal y Talonflame ya no se cortan con la cámara cerca; los originales no cambian. Pendiente: pausas en animaciones largas (Volcanion, Klefki). |
 | 06-nov | **Pokédex de White2Upgrade protegida** (`tools/w2u_build/patches/dex_limit.cpp`): las especies 673-721 ya no pisan el guardado (desvío de `PML_PkmIsBadMonsNo` en 4 funciones). Validado con Sylveon: 0 bytes distintos en el bloque tras verlo y capturarlo. `build.sh` aplica los parches de `patches/` y saca el volcado del módulo. |
 | 06-nov | **White2Upgrade compilado y probado** (`tools/w2u_build/`, Docker): arreglado el ARM9 marcado como comprimido (pantalla en blanco). Indicador de menú relativo al puntero base (`0x0223E3D5` en White2Upgrade). Greninja (658) en combate forzado, capturado y con su GIF de Showdown animado. `sprites_gen5.py`: piezas de 16×16 y `--bloque auto` (menos cortes al acercarse la cámara). |
 | 06-nov | **Sprites animados de Showdown en la ROM** (`tools/sprites_gen5.py`): cuadritos de 8×8 en la textura del combate y un nodo por posición. Validado en el juego con Sylveon: fijo, animado y apoyado en el suelo. Espacio: datos al final de la ROM, con la zona DSi de la cabecera (`0x90`/`0x92`) llevada al final, porque melonDS bloquea esa zona en modo DS. |
@@ -1323,6 +1345,8 @@ Notas:
 - [ ] Variocolor (un salvaje variocolor de la especie sustituida).
 - [x] En White2Upgrade, sobre su propia especie (Greninja, 658): frente animado y espalda fija, apoyados.
 - [x] Con 8×8 hay cortes breves al capturar; con 16×16 se notan menos.
+- [x] Las 72 de Gen 6 en lote (07-nov): Fennekin y Sylveon fluidos; las que pierden fotogramas se ven con pausas.
+- [x] Con el parche de profundidad: Yveltal y Talonflame sin cortes; los sprites originales, iguales.
 - [ ] Especie con más de 512 cuadritos (p. ej. Incineroar): se ve bien con menos fotogramas.
 - [ ] Combate doble con dos sprites animados.
 

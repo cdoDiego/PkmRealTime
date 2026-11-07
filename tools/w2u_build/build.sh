@@ -26,6 +26,13 @@ done
 # Parches propios (tools/w2u_build/patches, montado en /patches): se compilan junto al código de White2Upgrade
 if [ -d /patches ]; then
     for f in /patches/*.cpp; do [ -f "$f" ] && cp "$f" src/ && echo "[w2u] parche: $(basename "$f")"; done
+    # Símbolos que White2Upgrade no nombra (*.esdb.yml: entradas "- Name/Segment/Address" que se añaden al final de la
+    # lista Symbols de pmc/ESDB.yml, para poder engancharse a esas funciones)
+    for f in /patches/*.esdb.yml; do
+        [ -f "$f" ] || continue
+        echo >> pmc/ESDB.yml          # por si el archivo no acaba en salto de línea
+        cat "$f" >> pmc/ESDB.yml && echo "[w2u] símbolos: $(basename "$f")"
+    done
 fi
 mkdir -p tools/CTRMap
 cp /src/tools/CTRMap/CTRMap.jar tools/CTRMap/

@@ -7,6 +7,9 @@ Necesita Pillow (solo esta herramienta):  pip install pillow
   python tools/sprites_gen5.py convertir --rom W2.nds --salida prueba.nds --especie 25 --nombre sylveon
       pone el sprite de Sylveon en lugar del de la especie 25 (Pikachu); --fijo usa solo los PNG
       --bloque auto|8|16: tamaño de las piezas (auto: 16 si conserva al menos la mitad de los fotogramas; menos cortes)
+  python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida gen6.nds --desde 650 --hasta 721
+      todas las especies del rango, con el nombre que tienen en la ROM; baja lo que falte y escribe la ROM una vez
+      (sin GIF animado quedan fijas; sin PNG en Showdown se saltan)
 
 Cómo funciona (validado en el juego el 06-nov, ver DOCUMENTACION.md "Sprites de especies nuevas"):
 - El combate dibuja cada sprite (MCSS, src/system/mcss.c de la decomp) con rectángulos de una textura de 256x128 a 4
@@ -34,6 +37,9 @@ SPRITES = "a/0/0/4"            # 20 archivos por especie
 FILES_PER_SPECIES = 20
 TILES_MAX = 512                # cuadritos de 8x8 en la textura de 256x128 (con --bloque 16: 128 de 16x16)
 FX = 4096                      # fx32: 1.0
+# x de cada pieza = 1/4096 de píxel (invisible). En los originales el byte bajo siempre es 0: el parche de White2Upgrade
+# tools/w2u_build/patches/mcss_depth.cpp reconoce así las piezas convertidas y no las va mandando al fondo (cortes)
+PIECE_MARK = 0x01
 CACHE = os.path.join(ROOT, "sprites_showdown")
 SHOWDOWN = "https://play.pokemonshowdown.com/sprites/"
 VIEWS = {  # vista: (carpeta de GIF animado, carpeta de PNG fijo)
@@ -378,7 +384,7 @@ def make_bin(n, frames_idx, block: int = 8) -> bytes:
     out = struct.pack("<IHHhh", n, w, h, ox, oy)
     for i in range(n):
         s, t = (i % (256 // block)) * block, (i // (256 // block)) * block
-        out += struct.pack("<6i", 0, 0, block * FX, block * FX, s * FX, t * FX) + bytes(24)
+        out += struct.pack("<6i", PIECE_MARK, 0, block * FX, block * FX, s * FX, t * FX) + bytes(24)
     return out + bytes(4)            # cola: sin nodos "idle"
 
 
@@ -464,11 +470,8 @@ def write_file(data: bytearray, r: "rom.Rom", path: str, content: bytes) -> str:
     return f"al final ({new:#x}); zona DSi movida al final de la ROM"
 
 
-def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, static: bool = False, log=print,
-            block="auto") -> dict:
-    r = rom.Rom(rom_path)
-    files = r.narc(SPRITES)
-    base = species * FILES_PER_SPECIES
+def _species_files(files, base, folder, name, static, log, block):
+    """Los 20 archivos nuevos de una especie (sobre los suyos de la ROM) y la información de cada vista."""
     views = {}
     for side, (front, shiny) in ((0, ("frente", "frente_shiny")), (9, ("espalda", "espalda_shiny"))):
         png, png_s = (os.path.join(folder, f"{VIEWS[v][1]}_{name}.png") for v in (front, shiny))
@@ -484,23 +487,59 @@ def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, 
             log(f"{front}: fijo")
     normal, rare, to_idx, ncolors = palettes(views[0][0] + views[9][0], views[0][1] + views[9][1])
     log(f"colores: {ncolors} -> {len(normal) - 1}")
-    new, info = list(files), {}
+    new, info = list(files[base:base + FILES_PER_SPECIES]), {}
     for side, (frames, _) in views.items():
-        files_side, info[side] = side_files(files[base + side:base + side + 9], [to_idx(px) for px, _ in frames],
-                                            ds_durations([ms for _, ms in frames]), block)
-        new[base + side:base + side + 9] = files_side
+        new[side:side + 9], info[side] = side_files(files[base + side:base + side + 9], [to_idx(px) for px, _ in frames],
+                                                    ds_durations([ms for _, ms in frames]), block)
         i = info[side]
         log(f"  {'frente' if side == 0 else 'espalda'}: {i['frames']} fotogramas"
             + (f" (uno de cada {i['step']})" if i["step"] > 1 else "")
             + f", {i['tiles']}/{capacity(i['block'])} bloques de {i['block']}x{i['block']}, {i['nodes']} piezas, ciclo de {i['ticks']} fotogramas del DS")
-    new[base + 18] = nclr_replace(files[base + 18], normal)
-    new[base + 19] = nclr_replace(files[base + 19], rare)
+    new[18] = nclr_replace(files[base + 18], normal)
+    new[19] = nclr_replace(files[base + 19], rare)
+    return new, info
+
+
+def missing(folder: str, name: str) -> list:
+    """Los PNG fijos que faltan (sin ellos no se puede convertir la especie)."""
+    pngs = [f"{VIEWS[v][1]}_{name}.png" for v in VIEWS]
+    return [p for p in pngs if not os.path.exists(os.path.join(folder, p))]
+
+
+def convert_many(rom_path: str, out_path: str, pairs, folder: str, static: bool = False, log=print, block="auto") -> dict:
+    """Pone los sprites de varias especies [(nº de especie, nombre en Showdown)] y escribe la ROM una sola vez.
+    Las que no tienen sus 4 PNG en la carpeta se saltan."""
+    r = rom.Rom(rom_path)
+    files = r.narc(SPRITES)
+    new, done = list(files), {}
+    for species, name in pairs:
+        lack = missing(folder, name)
+        if lack:
+            log(f"#{species} {name}: se salta, faltan {', '.join(lack)}")
+            continue
+        log(f"#{species} {name}")
+        base = species * FILES_PER_SPECIES
+        new[base:base + FILES_PER_SPECIES], done[species] = _species_files(files, base, folder, name, static, log, block)
+    if not done:
+        raise SystemExit("ninguna especie convertida")
     data = bytearray(r.data)
     where = write_file(data, r, SPRITES, build_narc(r.file(SPRITES), new))
     with open(out_path, "wb") as f:
         f.write(data)
-    log(f"sprites {where}; guardado en {out_path}")
-    return info
+    log(f"{len(done)} especies; sprites {where}; guardado en {out_path}")
+    return done
+
+
+def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, static: bool = False, log=print,
+            block="auto") -> dict:
+    return convert_many(rom_path, out_path, [(species, name)], folder, static, log, block)[species]
+
+
+def showdown_id(name: str) -> str:
+    """Nombre del juego -> nombre de archivo en Showdown (Flabébé -> flabebe, Mr. Mime -> mrmime)."""
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return "".join(c for c in plain.lower() if c.isalnum())
 
 
 def download(name: str, folder: str = CACHE, log=print) -> None:
@@ -528,17 +567,32 @@ def main() -> None:
     c.add_argument("--especie", type=int, required=True, help="nº de la especie cuyo sprite se reemplaza")
     c.add_argument("--nombre", required=True, help="nombre en Showdown (sylveon, tapukoko...)")
     c.add_argument("--carpeta", default=CACHE); c.add_argument("--fijo", action="store_true", help="sin animación")
-    c.add_argument("--bloque", choices=("auto", "8", "16"), default="auto",
-                   help="tamaño de las piezas: 8 = todos los fotogramas; 16 = menos piezas (menos cortes con la cámara cerca);"
-                        " auto (por defecto) = 16 si conserva al menos la mitad de los fotogramas")
+    lt = sub.add_parser("lote", help="todas las especies de un rango, con el nombre que tienen en la ROM")
+    lt.add_argument("--rom", required=True); lt.add_argument("--salida", required=True)
+    lt.add_argument("--desde", type=int, required=True); lt.add_argument("--hasta", type=int, required=True)
+    lt.add_argument("--carpeta", default=CACHE); lt.add_argument("--fijo", action="store_true", help="sin animación")
+    lt.add_argument("--sin-descargar", action="store_true", help="usar solo lo que ya está en la carpeta")
+    for p in (c, lt):
+        p.add_argument("--bloque", choices=("auto", "8", "16"), default="auto",
+                       help="tamaño de las piezas: 8 = todos los fotogramas; 16 = menos piezas (menos cortes con la cámara"
+                            " cerca); auto (por defecto) = 16 si conserva al menos la mitad de los fotogramas")
     a = ap.parse_args()
     if a.cmd == "descargar":
         for n in a.nombre:
             download(n, a.carpeta)
+        return
+    if os.path.abspath(a.rom) == os.path.abspath(a.salida):
+        raise SystemExit("la salida tiene que ser otro archivo (la ROM original no se toca)")
+    block = a.bloque if a.bloque == "auto" else int(a.bloque)
+    if a.cmd == "lote":
+        names = rom.Rom(a.rom).text(rom.TEXT_SPECIES)
+        pairs = [(sp, showdown_id(names[sp])) for sp in range(a.desde, a.hasta + 1)]
+        if not a.sin_descargar:
+            for _, n in pairs:
+                download(n, a.carpeta)
+        convert_many(a.rom, a.salida, pairs, a.carpeta, a.fijo, block=block)
     else:
-        if os.path.abspath(a.rom) == os.path.abspath(a.salida):
-            raise SystemExit("la salida tiene que ser otro archivo (la ROM original no se toca)")
-        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo, block=a.bloque if a.bloque == "auto" else int(a.bloque))
+        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo, block=block)
 
 
 if __name__ == "__main__":

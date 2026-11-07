@@ -106,6 +106,15 @@ noisy = [[rng.randrange(1, 16) if 20 <= i % 96 < 76 and 20 <= i // 96 < 76 else 
 f2, d2, tiles, _, step = sg.fit_frames(noisy, [5] * 20)
 assert step > 1 and len(tiles) <= sg.TILES_MAX and sum(d2) == 100
 
+# piezas marcadas para el parche de profundidad (byte bajo de x); los originales lo tienen siempre a 0
+binf = sg.make_bin(3, frames, 16)
+assert all(struct.unpack_from("<i", binf, 12 + 48 * i)[0] & 0xFF == sg.PIECE_MARK for i in range(3))
+
+# nombres del juego -> archivos de Showdown (modo lote)
+assert [sg.showdown_id(n) for n in ("Flabébé", "Mr. Mime", "Farfetch'd", "Porygon-Z", "Greninja")] == \
+    ["flabebe", "mrmime", "farfetchd", "porygonz", "greninja"]
+assert sg.missing(os.path.dirname(__file__), "nadie") == [f"{sg.VIEWS[v][1]}_nadie.png" for v in sg.VIEWS]
+
 # NARC: rehacerlo sin cambios da el mismo archivo (con la ROM, si está configurada)
 import config, rom
 path = config.rom_path()

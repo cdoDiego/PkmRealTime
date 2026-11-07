@@ -10,3 +10,4 @@
 # Entorno de compilación de White2Upgrade: se ejecuta en Linux (Docker), siempre con saltos de línea LF
 tools/w2u_build/build.sh text eol=lf
 tools/w2u_build/Dockerfile text eol=lf
+tools/w2u_build/patches/*.esdb.yml text eol=lf

@@ -1,0 +1,6 @@
+  - Name: MCSSSys_Draw
+    Segment: 0x0
+    Address: 0x2019C39
+  - Name: MCSS_DrawQuad
+    Segment: 0x0
+    Address: 0x201A4AD
