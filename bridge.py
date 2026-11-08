@@ -56,7 +56,7 @@ WHEN_TO_MODES = {"en_mapa": {"map"}, "en_combate": {"battle"}, "cualquiera": {"m
                  "cualquiera_incluso_menu": {"map", "battle", "menu"}}   # solo para las herramientas de investigación
 BATTLE_EVENTS = {"battle_set_hp", "battle_set_status", "battle_set_stage", "battle_set_pp", "battle_set_weather",
                  "battle_set_item", "rival_action"}   # siempre esperan al combate
-FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_egg"}   # esperan al mapa (personaje libre)
+FIELD_SCRIPT_EVENTS = {"start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "set_follower", "give_egg"}   # esperan al mapa (personaje libre)
 
 
 class EventIn(BaseModel):
@@ -65,7 +65,7 @@ class EventIn(BaseModel):
     type: Literal["set_hp", "set_status", "heal", "set_item", "set_move", "set_egg_cycles", "give_item", "take_item",
                   "give_pokemon", "give_egg", "move_pokemon", "remove_pokemon", "battle_set_hp", "battle_set_status",
                   "battle_set_stage", "battle_set_pp", "battle_set_weather", "battle_set_item", "give_money", "take_money", "set_money", "set_season", "set_shiny_odds",
-                  "start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "give_wonder_card",
+                  "start_wild_battle", "start_trainer_battle", "set_weather", "teleport", "set_follower", "give_wonder_card",
                   "rival_action", "rival_control", "debug_peek", "debug_poke", "debug_inject", "rollback"]
     when: When = "en_mapa"
     target: dict = {}          # {"side": "player", "slot": 0}; heal sin slot = todo el equipo; {"box": 2, "slot": 0} = caja
@@ -115,6 +115,7 @@ class EventIn(BaseModel):
     action: Optional[str] = None     # rival_action: "move" (con move_slot) o "switch" (con to_slot: hueco del equipo rival)
     keep_paused: bool = False        # rival_action: no soltar la pausa del turno después de cambiar la elección
     mode: Optional[str] = None       # rival_control: "pause" (esperar la decisión en cada elección del rival) u "off"
+    obj_code: Optional[int] = None   # set_follower: mode "on"/"off" con la ROM que lo trae (follower.cpp); en otras, el modelo (0x1000+)
     seconds: Optional[int] = None    # rival_control: máximo de espera por elección (por defecto 30; 0 = 10 min)
 
 
@@ -274,6 +275,18 @@ def build_commands(ev: Event) -> str:
             return cmds
         if d["type"] == "teleport":
             return "SAVE;S " + field_script.teleport(str(need(d, "zone")), d.get("x"), d.get("z"))
+        if d["type"] == "set_follower":      # Pokémon que te sigue (sistema de acompañantes del juego)
+            if d.get("obj_code") is None:    # ROM con el acompañante dentro: solo encender o apagar
+                if d.get("mode") not in ("on", "off"):
+                    raise ValueError('set_follower: mode "on" u "off" (o obj_code en ROM sin acompañante)')
+                return "SAVE;S " + field_script.follower_native(d["mode"] == "on")
+            gid = (game.get("game") or {}).get("code")
+            if gid not in field_script.NO_PAIR_BATTLE_PATCH:
+                raise ValueError(f"acompañante: falta la dirección del parche de encuentros para el juego {gid}")
+            addr, orig, new = field_script.NO_PAIR_BATTLE_PATCH[gid]
+            if d.get("mode") == "off":
+                return f"SAVE;S {field_script.follower_end()};P {addr:#x} {orig} {orig}"
+            return f"SAVE;P {addr:#x} {orig} {new};S {field_script.follower(int(need(d, 'obj_code')))}"
         global persistent_weather
         w = str(need(d, "weather"))
         cmds = "SAVE;S " + field_script.field_weather(int(w) if w.isdigit() else w)

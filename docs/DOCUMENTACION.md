@@ -982,6 +982,54 @@ las especies 1-649, y **sus movimientos de Gen 7-9 se quedan** encima de los vie
 - Validado en el juego: partida nueva (Oshawott con Caparazón de Redux), combate contra la Chica 181 de Redux (Azurill
   Normal/Hada), registro, `battle_set_hp`, control del rival con ataques y cambio tras debilitarse.
 
+### Pokémon que te sigue (08-nov, prototipo probado en el juego)
+
+Viabilidad: el juego ya trae casi todo (nombres y argumentos leídos de la decomp pokebw2, sin copiar código):
+- **Acompañante de la historia** (`pair_sys`, overlay 12): un personaje que pisa la casilla de detrás del jugador y, si es
+  persistente, reaparece al cambiar de mapa. Órdenes de guion `ActorPairSet` (`0x250`: id, índice 0-7, persistente,
+  entrenador aliado, guion), `ActorPairEnd` (`0x251`) y `ActorPairSetMoveEnable` (`0x253`, u8).
+- **Modelos de Pokémon para caminar** (`OBJ_CODE_POKEMON_*`, desde `0x1000`; Eevee `0x1086`): 620 con sexos y formas.
+  Gen 1-4 completas (los de HeartGold, que usan las Grutas Ocultas); de Gen 5 unas 50 de 156; de Gen 6 ninguno.
+  `GetPokemonFieldOBJCODE(especie, sexo, forma)` (tabla `ARCID_TPOKE`) da el modelo de cada uno.
+
+Prototipo: evento `set_follower` (`obj_code`; `mode: "off"` lo quita). Guion: `PlayerGetGPos` (`0x68`), z + 1,
+`ActorNew` (`0x69`) con el modelo, `ActorPairSet` persistente con índice 7, sin entrenador ni guion, y movimiento activado.
+- Con acompañante, `CreateEncountManager` (overlay 36) hace los salvajes **dobles con él de aliado**; sin entrenador aliado
+  el juego sacaba un compañero vacío con el aspecto del jugador y se trababa. Parche mantenido por el Lua (`P`) mientras
+  hay acompañante: `bl GameData_CheckPairFlag` en `0x021A0B5E` (`c9f7a9fb`) → `movs r0, #0; nop` (`0020c046`).
+- Validado: te sigue, sigue tras combates, al cambiar de ruta y al entrar en edificios; hablar con gente, bien; en una
+  escena un personaje lo atraviesa sin problemas. Se ve un poco "flotando" (el modelo se dibuja algo más arriba).
+- El prototipo sigue disponible con `obj_code` para ROMs sin el parche de abajo.
+
+**Dentro de la ROM (08-nov, validado en el juego): `tools/w2u_build/patches/follower.cpp`.** El primero del
+equipo te sigue solo, como en HeartGold, sin depender del puente:
+- Al entrar en un mapa (`EventWarpSequence_CreateIn`, overlay 36, justo antes de `TryRespawnFollowActor`) pone el
+  modelo del primero del equipo (`GetPokemonFieldOBJCODE`); si es un huevo, no tiene modelo o es enorme, lo quita.
+  Si cambias el primero, el modelo cambia al cruzar la siguiente puerta o cambiar de ruta.
+- Con un aliado de la historia, el juego cura el equipo tras cada combate, hace dobles los salvajes, no deja usar bici,
+  Surf, Cascada, Buceo ni Cuerda Huida, y 16 guiones (Monte Tuerca, Alcantarillas, Ciudad Engobe...) leen la bandera
+  `0x966`. Por eso `GameData_CheckPairFlag` (sustituida) y las órdenes `VMStackPushFlag`/`FlagGet` (`0x10`/`0x25`)
+  dicen "nadie te sigue" si el que te sigue es el nuestro. Solo lo que lo mueve ve la bandera real
+  (`CheckPerStepEvents`, `EventWarpSequence_StartWalkTask`). Ya no hace falta el parche de encuentros del Lua.
+- Vuelo, Cuerda Huida, Teletransporte y caer debilitado cambian de mapa sin `EventWarpSequence_CreateIn`: en cada paso
+  (`CheckPerStepEvents`), si el nuestro falta en el mapa se crea y `updateFollowerModel` lo pone a tu lado.
+- Si la historia pone a un aliado (`ActorPairSet`), el nuestro se quita antes y vuelve en el siguiente mapa;
+  `ActorPairEnd` no lo toca.
+- Banderas del guardado: `0xA90` lo apaga y `0xA91` dice "es el nuestro". Ningún guion de W2, White2Upgrade ni Redux
+  usa `0xA80-0xA9F`; desde `0xAA0` son las diarias. Un Pokémon que te sigue para siempre y sin entrenador se adopta
+  como nuestro (partidas guardadas con el prototipo).
+- Puente: `set_follower` con `mode: "on"` / `"off"` (sin `obj_code`). Al apagarlo se va enseguida; al encenderlo
+  aparece en el siguiente mapa.
+- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py`). Frente a la ROM
+  anterior solo cambia `patches/White2Upgrade.dll`.
+- Validado (08-nov): sale al cruzar una puerta; salvajes individuales y entrenadores normales, sin curar al terminar;
+  bici (se queda algo atrás) y Surf (te sigue por el agua); cambia o desaparece con el primero del equipo al cruzar una
+  puerta (Eevee, Pidove; Patrat no tiene modelo); guardar y reiniciar; Vuelo (aparece al primer paso); hablarle no hace
+  nada; `set_follower` off (se va al momento) y on.
+- Ojo: cada ROM nueva cambia la huella (CRC de cabecera): hay que reiniciar el puente para que regenere sus datos.
+- Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta, modelos de las
+  especies que faltan y que no parezca que flota.
+
 ## 7. API
 
 Todas las peticiones llevan la cabecera `x-token: dev-token-cambiame`.

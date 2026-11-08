@@ -59,7 +59,7 @@ FIELD_WEATHER = {
 
 def _words(*values: int) -> str:
     for v in values:
-        if not 0 <= v < 0x4000 and v not in (0xFFFF, TEMP_VAR):
+        if not 0 <= v < 0x4000 and v != 0xFFFF and not TEMP_VAR <= v < TEMP_VAR + 4:
             raise ValueError(f"valor fuera de rango para un guion: {v}")
     return struct.pack(f"<{len(values)}H", *values).hex()
 
@@ -183,3 +183,60 @@ def give_egg(species: int, form: int = 0) -> str:
     if not 0 <= form < 32:
         raise ValueError("forma fuera de rango (0-31)")
     return _words(CMD_PARTY_ADD_EGG, TEMP_VAR, species, form, CMD_END)
+
+
+# Acompañante (prueba, 08-nov): el sistema de la historia para los aliados que te siguen (src/ov012/pair_sys.c)
+CMD_PLAYER_GET_GPOS = 0x0068        # s0068_PlayerGetGPos(variable x, variable z)
+CMD_ACTOR_NEW = 0x0069              # s0069_ActorNew(x, z, dirección, id, modelo, código de movimiento)
+CMD_ACTOR_DELETE = 0x006C           # s006C_ActorDelete(id)
+CMD_WORK_ADD = 0x0026               # s0026_WorkAdd(variable, valor)
+CMD_PAIR_SET = 0x0250               # s0250_ActorPairSet(id, índice 0-7, persistente, entrenador aliado, guion)
+CMD_PAIR_END = 0x0251               # s0251_ActorPairEnd(guion, código de movimiento)
+CMD_PAIR_MOVE_ENABLE = 0x0253       # s0253_ActorPairSetMoveEnable(u8)
+FOLLOWER_NEW_ID = 0xF0              # id con el que se crea (luego el juego le pone FOLLOWER_ACTOR_ID = 0xFE)
+FOLLOWER_ACTOR_ID = 0xFE
+FOLLOWER_INDEX = 7                  # índice del acompañante (0-7); la historia usa los bajos
+OBJ_CODE_POKEMON_MIN = 0x1000       # modelos de Pokémon para caminar (OBJ_CODE_POKEMON_*: 0x1000-0x126B)
+# Con acompañante, los salvajes salen dobles con él de aliado (CreateEncountManager, overlay 36: pairActive =
+# GameData_CheckPairFlag). Nuestro Pokémon no es entrenador: el juego sacaba un aliado vacío y se trababa (08-nov).
+# Parche: ese bl -> movs r0, #0; nop (pairActive = 0). Lo mantiene el Lua (orden P) mientras haya acompañante.
+NO_PAIR_BATTLE_PATCH = {"IRDO": (0x021A0B5E, "c9f7a9fb", "0020c046")}
+
+
+def follower(obj_code: int) -> str:
+    """Crea un personaje con ese modelo debajo del jugador y lo vuelve su acompañante persistente (sigue al cambiar
+    de mapa). Si ya hay uno (de la historia o anterior), el juego no lo cambia."""
+    if not OBJ_CODE_POKEMON_MIN <= obj_code < 0x2000:
+        raise ValueError("obj_code debe ser un modelo de Pokémon (0x1000-0x1FFF)")
+    x, z = TEMP_VAR, TEMP_VAR + 1
+    return (_words(CMD_PLAYER_GET_GPOS, x, z, CMD_WORK_ADD, z, 1,
+                   CMD_ACTOR_NEW, x, z, DIR_DOWN, FOLLOWER_NEW_ID, obj_code, 0,
+                   CMD_PAIR_SET, FOLLOWER_NEW_ID, FOLLOWER_INDEX, 1, 0, 0)
+            + struct.pack("<HB", CMD_PAIR_MOVE_ENABLE, 1).hex() + _words(CMD_END))
+
+
+def follower_end() -> str:
+    """Quita el acompañante."""
+    return _words(CMD_PAIR_END, 0, 0, CMD_ACTOR_DELETE, FOLLOWER_ACTOR_ID, CMD_ACTOR_DELETE, FOLLOWER_NEW_ID, CMD_END)
+
+
+# Acompañante dentro de la ROM (tools/w2u_build/patches/follower.cpp): el primero del equipo te sigue solo. Estas
+# banderas del guardado lo apagan y dicen si el que te sigue es el nuestro (no un aliado de la historia).
+CMD_FLAG_SET = 0x0023               # s0023_FlagSet(bandera)
+CMD_FLAG_RESET = 0x0024             # s0024_FlagReset(bandera)
+CMD_FLAG_GET = 0x0025               # s0025_FlagGet(bandera, variable)
+FLAG_PAIR = 0x966                   # pair_sys: alguien te sigue
+FLAG_FOLLOWER_OFF = 0xA90
+FLAG_FOLLOWER_OURS = 0xA91
+
+
+def follower_native(on: bool) -> str:
+    """Enciende o apaga el acompañante de la ROM. Al encenderlo aparece al entrar en el siguiente mapa (puerta,
+    cambio de ruta); al apagarlo se va enseguida, pero solo si es el nuestro (un aliado de la historia se queda)."""
+    if on:
+        return _words(CMD_FLAG_RESET, FLAG_FOLLOWER_OFF, CMD_END)
+    remove = _words(CMD_ACTOR_DELETE, FOLLOWER_ACTOR_ID, CMD_FLAG_RESET, FLAG_PAIR, CMD_FLAG_RESET, FLAG_FOLLOWER_OURS)
+    return (_words(CMD_FLAG_SET, FLAG_FOLLOWER_OFF, CMD_FLAG_GET, FLAG_FOLLOWER_OURS, TEMP_VAR,
+                   CMD_CMP_CONST, TEMP_VAR, 0)
+            + struct.pack("<HBI", CMD_JUMP_IF, COND_EQUAL, len(remove) // 2).hex()   # no es el nuestro: nada que quitar
+            + remove + _words(CMD_END))

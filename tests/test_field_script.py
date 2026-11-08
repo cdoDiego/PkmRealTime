@@ -64,3 +64,13 @@ for bad in [lambda: field_script.give_egg(0), lambda: field_script.give_egg(1, 4
     except ValueError:
         pass
 print("ok huevo")
+
+# acompañante de la ROM: encender = quitar la bandera de apagado; apagar = ponerla y, si es el nuestro, quitarlo
+assert field_script.follower_native(True) == "2400900a0200"
+off = bytes.fromhex(field_script.follower_native(False))
+assert off[:4] == bytes.fromhex("2300900a")                                   # FlagSet 0xA90
+jump = off.index(bytes.fromhex("1f0001"))                                     # si no es el nuestro, se salta lo de quitar
+skip = int.from_bytes(off[jump + 3:jump + 7], "little")
+assert off[jump + 7 + skip:] == bytes.fromhex("0200")                         # ...y cae justo en el final
+assert bytes.fromhex("6c00fe00") in off[jump + 7:jump + 7 + skip]             # ActorDelete 0xFE
+print("ok acompañante")
