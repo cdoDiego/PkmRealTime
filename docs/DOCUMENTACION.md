@@ -967,7 +967,7 @@ las especies 1-649, y **sus movimientos de Gen 7-9 se quedan** encima de los vie
 | Evoluciones | Las de Redux en el formato de 8 huecos de White2Upgrade, más las que van a especies nuevas (Eevee → Sylveon) |
 | Movimientos 0-559 | Redux donde cambia (también nombres, descripciones y mensajes, línea por línea); el resto, White2Upgrade |
 | Objetos, entrenadores (891), encuentros, guiones, textos de la historia y 21 archivos más | Redux |
-| Iconos (`a/0/0/7`) | White2Upgrade (usa su propio mapa de paletas) |
+| Iconos (`a/0/0/7`) | White2Upgrade, **paletas incluidas** (entradas 0 y 1): con las de Redux los iconos salían con los colores cambiados (visto en el juego el 08-nov) |
 | Tipo Hada (overlays 167, 168, 207, 255, 265) | White2Upgrade: Redux lo parchea en las mismas direcciones (los dos vienen del parche de MeroMero) |
 | arm9 | Redux desde `0x02005000`: variocolor 1/512, lista de MT, MO que se pueden olvidar, `PML_GenPID`, gráficos de objetos, clases de entrenador. No: el arranque (cada uno lo arregla a su manera) ni su código de iconos Hada (`0x02093BF0`, solo lo llama su overlay 255) |
 | Overlays 36 y 166 | Redux: Grutas Ocultas, fenómenos, polvaredas, entrenadores del entorno, Recogida |

@@ -9,7 +9,7 @@ Las tres ROMs son de W2 USA. Se compara Redux con la original y solo se lleva lo
     White2Upgrade (722 en adelante), y los campos de formas (0x1C-0x20) son los de White2Upgrade, que añade megas;
   - evoluciones: White2Upgrade usa 8 huecos (48 bytes) y añade evoluciones a especies nuevas (Eevee -> Sylveon);
   - textos: línea por línea (nombres y descripciones de movimientos, mensajes "X usó Y");
-  - iconos (a/0/0/7): si los dos cambian el mismo, se queda el de White2Upgrade (usa su propio mapa de paletas).
+  - iconos (a/0/0/7): todos de White2Upgrade, paletas incluidas (las de Redux cambian los colores de sus iconos).
 - Código (arm9 y overlays 36, 166 y 167), solo lo que no es del tipo Hada: White2Upgrade pone su propio tipo Hada en
   las mismas direcciones que Redux, y su arranque ya está arreglado. Se lleva el variocolor 1/512, la lista de MT, las
   MO que se pueden olvidar, gráficos de objetos, clases de entrenador, Grutas Ocultas, polvaredas y Recogida.
@@ -34,7 +34,7 @@ FORMS_ORIG = range(685, 709)        # formas en los datos de especie de la origi
 FORM_FIELDS = slice(0x1C, 0x21)     # personal: primer dato de forma (u16), sprite de forma (u16), nº de formas (u8)
 BY_SPECIES = ("a/0/1/6", "a/0/1/8", "a/0/1/9")   # datos, movimientos por nivel, evoluciones (índice de especie/forma)
 TEXT_BY_LINE = {16, 402, 403}       # mensajes de movimientos, descripciones y nombres
-KEEP_BASE = {"a/0/0/7"}             # iconos
+KEEP_BASE = {"a/0/0/7"}             # iconos: imágenes y paletas van juntas
 ARM9_FROM = 0x02005000              # antes: arranque (Redux y White2Upgrade lo arreglan cada uno a su manera)
 ARM9_SKIP = {0x02093BF0}            # código de Redux para los iconos del tipo Hada (solo lo llama su overlay 255)
 OVERLAYS = {36: None, 166: None,    # None = todo lo que cambia; si no, solo esas zonas
@@ -136,7 +136,7 @@ def merge_narc(path: str, o: list, r: list, b: list, log) -> list:
             continue
         if path == rom.TEXT and i in TEXT_BY_LINE:
             out[i] = merge_lines(o[i], r[i], b[i])
-        elif b[i] != o[i] and path in KEEP_BASE:
+        elif path in KEEP_BASE:
             kept += 1
             continue
         else:

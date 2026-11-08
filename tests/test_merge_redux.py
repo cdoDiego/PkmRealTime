@@ -62,4 +62,5 @@ assert out[3][:2] == bytes([80, 87]) and out[3][mr.FORM_FIELDS] == b_l[3][mr.FOR
 assert mr.merge_narc("x", [b"a"], [b"a", b"z"], [b"a", b"z"], lambda *_: None) == [b"a", b"z"]
 assert mr.merge_narc("x", [b"a"], [b"b", b"z"], [b"a"], lambda *_: None) == [b"b", b"z"]
 assert mr.merge_narc("a/0/0/7", [b"a"], [b"r"], [b"u"], lambda *_: None) == [b"u"]   # iconos: los de la base
+assert mr.merge_narc("a/0/0/7", [b"p", b"a"], [b"P", b"a"], [b"p", b"u"], lambda *_: None) == [b"p", b"u"]   # y sus paletas
 print("ok merge_redux")
