@@ -110,6 +110,53 @@ assert step > 1 and len(tiles) <= sg.TILES_MAX and sum(d2) == 100
 binf = sg.make_bin(3, frames, 16)
 assert all(struct.unpack_from("<i", binf, 12 + 48 * i)[0] & 0xFF == sg.PIECE_MARK for i in range(3))
 
+# modo "mitad": 2x2 -> 1 píxel (el color más repetido; transparente si hay menos de 2 con color)
+src = [0] * 9216
+src[0], src[1], src[96], src[97] = 3, 3, 5, 0          # cuadro (0,0): gana el 3
+src[2] = 7                                             # cuadro (1,0): un solo píxel con color -> transparente
+h = sg.half_frames([src])[0]
+assert h[0] == 3 and h[1] == 0 and len(h) == 9216
+# la escala va en los elementos de la animación (tipo 1, SRT: índice, giro, sx, sy, px, py)
+knba = sg.lz_decompress(sg.make_nanr([[(5, 1), (5, 2)]], 2))
+seq = struct.unpack_from("<HHHHII", knba, 16 + 8 + 0x18)            # tras la cabecera NITRO (16) y la del bloque (8)
+assert seq[2] == 1 and seq[3] == 1
+elems = knba[16 + 8 + struct.unpack_from("<I", knba, 16 + 8 + 12)[0]:]
+assert struct.unpack_from("<HHiihh", elems, 0) == (1, 0, 2 * sg.FX, 2 * sg.FX, 0, 0)
+files_m, info_m = sg.side_files(templates, frames, durs, 8, "mitad")
+assert info_m["mode"] == "mitad" and info_m["tiles"] <= sg.TILES_MAX
+
+# modo "tramo": el tramo seguido que cabe, en ida y vuelta (sin repetir los extremos)
+# cuadritos que se pasan por poco: se juntan con el más parecido (y los índices siguen siendo 0..n-1)
+base_t = bytes(rng.randrange(1, 16) for _ in range(64))
+near = {bytes(64): 0, base_t: 1, base_t[:-1] + b"\x00": 2, bytes(range(64)): 3}
+st, sn = sg.shrink_tiles(near, [((0, 0), [1, 2, 3, 0])], 3)
+assert len(st) == 3 and sorted(st.values()) == [0, 1, 2] and sn[0][1][0] == sn[0][1][1] and sn[0][1][3] == 0
+
+
+def patched(*cells):
+    """El fotograma base con algunos cuadros de 8x8 cambiados (cada cambio cuesta un cuadrito)."""
+    px = frame(0, 0, 4)
+    for gx, gy in cells:
+        for y in range(8):
+            for x in range(8):
+                px[(gy * 8 + y) * 96 + gx * 8 + x] = 9
+    return px
+
+
+a, b, c = patched(), patched((5, 6)), patched((5, 6), (6, 7))
+seg, segd = sg.best_segment([a, b, c], [3, 4, 5])              # c no enlaza con a: ida y vuelta
+assert seg == [a, b, c, b] and segd == [3, 4, 5, 4]
+cyc = [a, b, c, b] * 3                                          # ciclo repetido (como Klefki): bucle normal, todo
+seg, segd = sg.best_segment(cyc, [3] * 12)
+assert seg == cyc and segd == [3] * 12
+seg2, _ = sg.best_segment(noisy, [5] * 20)
+assert len(seg2) < 20 and len(set().union(*(sg.tile_grid([p])[0] for p in seg2))) <= sg.soft_capacity(8)
+# "auto": tramo solo si normal saltaría más de LONG_STEP fotogramas
+assert sg.side_files(templates, frames, durs, 8, "auto")[1]["mode"] == "normal"
+noisy40 = [[rng.randrange(1, 16) if 20 <= i % 96 < 76 and 20 <= i // 96 < 76 else 0 for i in range(9216)] for _ in range(40)]
+assert sg.fit_frames(noisy40, [5] * 40)[4] > sg.LONG_STEP
+assert sg.side_files(templates, noisy40, [5] * 40, 8, "auto")[1]["mode"] == "tramo"
+
 # nombres del juego -> archivos de Showdown (modo lote)
 assert [sg.showdown_id(n) for n in ("Flabébé", "Mr. Mime", "Farfetch'd", "Porygon-Z", "Greninja")] == \
     ["flabebe", "mrmime", "farfetchd", "porygonz", "greninja"]

@@ -846,11 +846,29 @@ Pendiente:
 - Especies con más de 512 cuadritos (Incineroar, Necrozma), que pierden fotogramas.
 - El variocolor en el juego.
 - Combates dobles.
-- **Animaciones largas con pausas** (07-nov, visto en el juego): si los cuadritos distintos no caben en la textura, se usa
-  uno de cada N fotogramas y cada uno dura N veces más. Peores: Volcanion (1 de 12), Klefki (1 de 9), Zygarde y Tyrantrum
-  (1 de 8). Ideas: mover piezas con desplazamiento por fotograma (elemento de tipo 2 en la animación) para reutilizar
-  cuadritos cuando el cuerpo solo sube y baja; usar un tramo seguido que cierre bien (bucle corto); juntar cuadritos casi
-  iguales; o reducir a la mitad y dibujar al doble (pierde detalle de pixel art).
+
+**Animaciones largas sin pausas (07-nov, probado en el juego):** si los cuadritos distintos no caben en la textura (512
+de 8×8), antes se usaba uno de cada N fotogramas, y cada uno duraba N veces más (Volcanion 1 de 12, Klefki 1 de 9). Se veía
+a saltos. Acelerar no sirve, porque faltan los fotogramas intermedios. Ahora `side_files` tiene modos (`--modo` en
+`convertir`; `--mitad`, `--tramo`, `--normal` con especies separadas por comas en `lote`):
+
+| Modo | Qué hace | Resultado |
+|---|---|---|
+| `auto` (por defecto) | `normal`; si saltaría más de `LONG_STEP` = 3 fotogramas, `tramo` | El que se usa |
+| `normal` | Todos los fotogramas que quepan (1 de cada N) | Fluido si N ≤ 3 |
+| `tramo` | `best_segment`: el tramo seguido más largo que cabe, con paso 1-3 (uno mayor solo si cubre ≥1,5× más tiempo). Si el final enlaza con el inicio (diferencia ≤ la peor entre fotogramas seguidos), bucle normal; si no, ida y vuelta | Fluido; no se ve la animación entera |
+| `mitad` | Cada 2×2 → 1 píxel (el color más repetido) y se dibuja al doble con elementos SRT (tipo 1) en la animación | Descartado: se ve pixelado |
+
+Ayudas comunes:
+- **Margen del 10 %** (`MERGE_SLACK`, `soft_capacity`): si se pasa un poco, `shrink_tiles` junta los cuadritos más parecidos
+  (distancia de Hamming) en vez de quitar fotogramas.
+- **Bloque en `auto`:** 16×16 si salta igual o menos fotogramas que con 8×8; si no, 8×8.
+
+Resultado: ninguna especie empeora y ninguna fuera de `tramo` salta más de 2 de cada 3. Klefki hace sus 3 oscilaciones
+seguidas en bucle (11,1 s; la parte de las llaves no cabe). Volcanion: 9,3 s de 11,9. Catorce especies pasan a todos sus
+fotogramas (Greninja, Froakie, Braixen...).
+
+Probado y descartado: desplazar el fotograma para reutilizar cuadritos (ahorra ~5 %).
 
 ### White2Upgrade compilado (06-nov, probado en el juego)
 
@@ -1224,7 +1242,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
-| 07-nov | **Sprites de Gen 6 completos y sin cortes**: `sprites_gen5.py lote` convierte 650-721 de una vez (52 animados, 20 fijos). Parche `mcss_depth.cpp` (+ `mcss.esdb.yml`, símbolos que White2Upgrade no nombra): las piezas marcadas no se van al fondo, así que Yveltal y Talonflame ya no se cortan con la cámara cerca; los originales no cambian. Pendiente: pausas en animaciones largas (Volcanion, Klefki). |
+| 07-nov | **Sprites de Gen 6 completos y sin cortes**: `sprites_gen5.py lote` convierte 650-721 de una vez (52 animados, 20 fijos). Parche `mcss_depth.cpp` (+ `mcss.esdb.yml`, símbolos que White2Upgrade no nombra): las piezas marcadas no se van al fondo, así que Yveltal y Talonflame ya no se cortan con la cámara cerca; los originales no cambian. **Sin pausas en animaciones largas**: modos `auto`/`tramo`/`mitad`, tramo seguido en bucle o ida y vuelta, cuadritos parecidos juntados con un margen del 10 %; Klefki y Volcanion fluidos. |
 | 06-nov | **Pokédex de White2Upgrade protegida** (`tools/w2u_build/patches/dex_limit.cpp`): las especies 673-721 ya no pisan el guardado (desvío de `PML_PkmIsBadMonsNo` en 4 funciones). Validado con Sylveon: 0 bytes distintos en el bloque tras verlo y capturarlo. `build.sh` aplica los parches de `patches/` y saca el volcado del módulo. |
 | 06-nov | **White2Upgrade compilado y probado** (`tools/w2u_build/`, Docker): arreglado el ARM9 marcado como comprimido (pantalla en blanco). Indicador de menú relativo al puntero base (`0x0223E3D5` en White2Upgrade). Greninja (658) en combate forzado, capturado y con su GIF de Showdown animado. `sprites_gen5.py`: piezas de 16×16 y `--bloque auto` (menos cortes al acercarse la cámara). |
 | 06-nov | **Sprites animados de Showdown en la ROM** (`tools/sprites_gen5.py`): cuadritos de 8×8 en la textura del combate y un nodo por posición. Validado en el juego con Sylveon: fijo, animado y apoyado en el suelo. Espacio: datos al final de la ROM, con la zona DSi de la cabecera (`0x90`/`0x92`) llevada al final, porque melonDS bloquea esa zona en modo DS. |
@@ -1347,6 +1365,7 @@ Notas:
 - [x] Con 8×8 hay cortes breves al capturar; con 16×16 se notan menos.
 - [x] Las 72 de Gen 6 en lote (07-nov): Fennekin y Sylveon fluidos; las que pierden fotogramas se ven con pausas.
 - [x] Con el parche de profundidad: Yveltal y Talonflame sin cortes; los sprites originales, iguales.
+- [x] Modo `tramo` (Volcanion, Klefki, Zygarde, Tyrantrum): fluido, "prácticamente no se nota"; `mitad` se ve pixelado.
 - [ ] Especie con más de 512 cuadritos (p. ej. Incineroar): se ve bien con menos fotogramas.
 - [ ] Combate doble con dos sprites animados.
 

@@ -40,6 +40,12 @@ FX = 4096                      # fx32: 1.0
 # x de cada pieza = 1/4096 de píxel (invisible). En los originales el byte bajo siempre es 0: el parche de White2Upgrade
 # tools/w2u_build/patches/mcss_depth.cpp reconoce así las piezas convertidas y no las va mandando al fondo (cortes)
 PIECE_MARK = 0x01
+# Modo "auto": si usando uno de cada N fotogramas N pasa de esto, la animación se ve a saltos y se usa un tramo
+# (probado el 07-nov: con 1 de cada 2-3 se ve fluido; con 1 de cada 4 o más, con pausas)
+LONG_STEP = 3
+# Si los cuadritos se pasan de la textura hasta un 10 %, se juntan los más parecidos en vez de quitar fotogramas
+# (Klefki: su oscilación completa con 1 de cada 3 pide 537 de 512)
+MERGE_SLACK = 0.10
 CACHE = os.path.join(ROOT, "sprites_showdown")
 SHOWDOWN = "https://play.pokemonshowdown.com/sprites/"
 VIEWS = {  # vista: (carpeta de GIF animado, carpeta de PNG fijo)
@@ -282,21 +288,56 @@ def tile_grid(frames_idx, block: int = 8):
     return tiles, nodes
 
 
+def soft_capacity(block: int = 8) -> int:
+    """Cuadritos que se aceptan antes de quitar fotogramas: hasta un MERGE_SLACK más de los que caben, porque
+    shrink_tiles los junta con los más parecidos (diferencias de pocos píxeles)."""
+    return int(capacity(block) * (1 + MERGE_SLACK))
+
+
+def shrink_tiles(tiles, nodes, cap):
+    """Si sobran cuadritos, cada uno de los que sobran se sustituye por el más parecido (menos píxeles distintos) de los
+    que se quedan. tiles: {bytes: índice} (0 = vacío); nodes: [(posición, [índice por fotograma])]."""
+    if len(tiles) <= cap:
+        return tiles, nodes
+    items = sorted(((i, t) for t, i in tiles.items() if i), key=lambda it: it[0])
+    use = Counter(i for _, seq in nodes for i in seq)
+
+    def dist(a, b):
+        return sum(x != y for x, y in zip(a, b))
+
+    nearest = {}
+    for i, t in items:
+        nearest[i] = min(((dist(t, u), j) for j, u in items if j != i), default=(1 << 30, 0))
+    # se van los que tienen un parecido más cercano (y, a igualdad, los que menos se ven)
+    order = sorted(items, key=lambda it: (nearest[it[0]][0], use[it[0]]))
+    gone = set()
+    for i, _ in order:
+        if len(tiles) - len(gone) <= cap:
+            break
+        if nearest[i][1] not in gone:
+            gone.add(i)
+    kept = [(i, t) for i, t in items if i not in gone]
+    new_index = {i: k + 1 for k, (i, _) in enumerate(kept)}
+    for i, t in items:
+        if i in gone:
+            new_index[i] = new_index[min(kept, key=lambda ku: dist(t, ku[1]))[0]]
+    new_index[0] = 0
+    new_tiles = {bytes(len(next(iter(tiles)))): 0}
+    new_tiles.update({t: new_index[i] for i, t in kept})
+    return new_tiles, [(pos, [new_index[i] for i in seq]) for pos, seq in nodes]
+
+
 def fit_frames(frames_idx, durs, block: int = 8):
-    """Junta fotogramas iguales seguidos y, si los cuadritos no caben en la textura, usa uno de cada 2, 3..."""
-    merged = []
-    for px, d in zip(frames_idx, durs):
-        if merged and merged[-1][0] == px:
-            merged[-1][1] += d
-        else:
-            merged.append([px, d])
-    frames_idx, durs = [m[0] for m in merged], [m[1] for m in merged]
+    """Junta fotogramas iguales seguidos y, si los cuadritos no caben en la textura, usa uno de cada 2, 3...
+    Si se pasa por poco (hasta MERGE_SLACK), en vez de quitar fotogramas junta los cuadritos más parecidos."""
+    frames_idx, durs = merge_repeats(frames_idx, durs)
     step = 1
     while True:
         sub = list(range(0, len(frames_idx), step))
         f2, d2 = [frames_idx[i] for i in sub], [sum(durs[i:i + step]) for i in sub]
         tiles, nodes = tile_grid(f2, block)
-        if len(tiles) <= capacity(block):
+        if len(tiles) <= soft_capacity(block):
+            tiles, nodes = shrink_tiles(tiles, nodes, capacity(block))
             return f2, d2, tiles, nodes, step
         step += 1
 
@@ -332,23 +373,27 @@ def _uext():
     return _block(b"TXEU", struct.pack("<I", 0))
 
 
-def _anim(kind, sequences):
-    """KNBA de NANR (kind 1) o NMAR (kind 2): secuencias [(duración, índice)], elemento solo índice, en bucle."""
+def _anim(kind, sequences, scale=1):
+    """KNBA de NANR (kind 1) o NMAR (kind 2): secuencias [(duración, índice)], en bucle. Elemento solo índice (tipo 0) o,
+    con scale != 1, índice + escala (tipo 1, SRT: índice, giro, sx, sy, px, py), que MCSS aplica a cada pieza."""
     elems, elem_off, frames, seqs = bytearray(), {}, bytearray(), bytearray()
+    elem_type = 0 if scale == 1 else 1
     for seq in sequences:
         first = len(frames)
         for dur, idx in seq:
             if idx not in elem_off:
-                elem_off[idx] = len(elems); elems += struct.pack("<HH", idx, 0xCCCC)
+                elem_off[idx] = len(elems)
+                elems += (struct.pack("<HH", idx, 0xCCCC) if elem_type == 0
+                          else struct.pack("<HHiihh", idx, 0, scale * FX, scale * FX, 0, 0))
             frames += struct.pack("<IHH", elem_off[idx], dur, 0xBEEF)
-        seqs += struct.pack("<HHHHII", len(seq), 0, 0, kind, 2, first)
+        seqs += struct.pack("<HHHHII", len(seq), 0, elem_type, kind, 2, first)
     off_fr = 0x18 + len(seqs)
     head = struct.pack("<HHIIIII", len(sequences), sum(len(s) for s in sequences), 0x18, off_fr, off_fr + len(frames), 0, 0)
     return _block(b"KNBA", head + seqs + frames + elems)
 
 
-def make_nanr(sequences) -> bytes:
-    return lz11(_nitro(b"RNAN", [_anim(1, sequences), _labels(), _uext()]))
+def make_nanr(sequences, scale=1) -> bytes:
+    return lz11(_nitro(b"RNAN", [_anim(1, sequences, scale), _labels(), _uext()]))
 
 
 def make_nmar(total) -> bytes:
@@ -388,19 +433,114 @@ def make_bin(n, frames_idx, block: int = 8) -> bytes:
     return out + bytes(4)            # cola: sin nodos "idle"
 
 
-def side_files(templates, frames_idx, durs, block=8):
+def half_frames(frames_idx):
+    """Cada fotograma a la mitad (48x48, arriba a la izquierda del lienzo de 96): cada píxel es el color más repetido de
+    su cuadro de 2x2 (transparente si hay menos de 2 con color)."""
+    out = []
+    for px in frames_idx:
+        h = [0] * (96 * 96)
+        for y in range(48):
+            for x in range(48):
+                c = [v for v in (px[2 * y * 96 + 2 * x], px[2 * y * 96 + 2 * x + 1], px[(2 * y + 1) * 96 + 2 * x],
+                                 px[(2 * y + 1) * 96 + 2 * x + 1]) if v]
+                if len(c) >= 2:
+                    h[y * 96 + x] = Counter(c).most_common(1)[0][0]
+        out.append(h)
+    return out
+
+
+def merge_repeats(frames_idx, durs):
+    """Junta fotogramas iguales seguidos (sumando su duración)."""
+    merged = []
+    for px, d in zip(frames_idx, durs):
+        if merged and merged[-1][0] == px:
+            merged[-1][1] += d
+        else:
+            merged.append([px, d])
+    return [m[0] for m in merged], [m[1] for m in merged]
+
+
+def _grid_ids(px, block: int = 8) -> tuple:
+    """El fotograma como el cuadrito que hay en cada posición de la rejilla (para compararlos deprisa)."""
+    n = 96 // block
+    return tuple(bytes(px[(gy * block + y) * 96 + gx * block + x] for y in range(block) for x in range(block))
+                 for gy in range(n) for gx in range(n))
+
+
+def best_segment(frames_idx, durs, block: int = 8, max_step: int = 3):
+    """El tramo seguido que cubre más tiempo de la animación y cuyos cuadritos caben en la textura.
+    - Los fotogramas que se repiten no gastan cuadritos: si la animación repite un movimiento (Klefki oscila 3 veces
+      igual), el tramo puede abarcar todas las repeticiones.
+    - Prueba con todos los fotogramas del tramo, con uno de cada 2 y con uno de cada 3 (cada uno se ve 0,2-0,3 s, aún
+      fluido); acepta un paso mayor solo si cubre al menos 1,5 veces más tiempo.
+    - Si el último fotograma enlaza con el primero tan bien como dos seguidos (un ciclo completo), se repite en bucle
+      normal; si no, en ida y vuelta (adelante y luego atrás, sin repetir los extremos), para que no haya saltos.
+      Se prefiere un tramo en bucle normal si cubre al menos el 70 % del tiempo del mejor en ida y vuelta."""
+    frames_idx, durs = merge_repeats(frames_idx, durs)
+    cap = soft_capacity(block) - 1          # sin contar el vacío (fit_frames junta los que se pasen de la capacidad)
+    grids = [_grid_ids(px, block) for px in frames_idx]
+    sets = [set(g) - {bytes(block * block)} for g in grids]
+
+    def diff(a, b):
+        return sum(x != y for x, y in zip(grids[a], grids[b]))
+
+    best = None
+    for step in range(1, max_step + 1):
+        sub = list(range(0, len(frames_idx), step))
+        d2 = [sum(durs[i:i + step]) for i in sub]
+        any_, loop = (0, 0, 0), (0, 0, 0)
+        for start in range(len(sub)):
+            s, t, worst = set(), 0, 0
+            for end in range(start, len(sub)):
+                s |= sets[sub[end]]
+                if len(s) > cap:
+                    break
+                t += d2[end]
+                if end > start:
+                    worst = max(worst, diff(sub[end - 1], sub[end]))
+                any_ = max(any_, (t, start, end))
+                if end - start >= 2 and diff(sub[end], sub[start]) <= worst:     # 2 fotogramas: es ida y vuelta
+                    loop = max(loop, (t, start, end))
+        forward = loop[0] >= 0.7 * any_[0] and loop[0] > 0
+        time_, start, end = loop if forward else any_
+        if best is None or time_ >= 1.5 * best[0]:
+            best = (time_, sub, d2, start, end, forward)
+    _, sub, d2, start, end, forward = best
+    idx = list(range(start, end + 1))
+    if not forward:
+        idx += list(range(end - 1, start, -1))
+    return [frames_idx[sub[i]] for i in idx], [d2[i] for i in idx]
+
+
+def side_files(templates, frames_idx, durs, block=8, mode="normal"):
     """Los 9 archivos de una vista (frente o espalda) a partir de sus fotogramas ya en índices de paleta.
     block: tamaño de cada pieza. Con 8 caben todos los fotogramas, pero salen 50-70 piezas por sprite; el juego dibuja cada
     una 1 píxel más al fondo (mcss.c) y, cuando la cámara se acerca (captura, algunos ataques), se ven cortes. Con 16 son
     ~20 piezas, como los originales, a cambio de usar menos fotogramas. "auto": 16 si así se conserva al menos la mitad
-    de los fotogramas (como Greninja); si no, 8 con todos."""
+    de los fotogramas (como Greninja); si no, 8 con todos.
+    mode, para animaciones que no caben (si no, se usa uno de cada N fotogramas y se ve a saltos):
+      "mitad": a media resolución y cada pieza dibujada al doble (escala de la animación de celdas): caben ~4 veces más
+               fotogramas, pero se ve más pixelado;
+      "tramo": el tramo seguido más largo que cabe, en ida y vuelta (fluido, pero solo una parte del movimiento)."""
+    full = frames_idx
+    scale = 1
+    if mode == "auto":     # tramo solo si, normal, se vería a saltos (uno de cada más de LONG_STEP fotogramas)
+        mode = "tramo" if fit_frames(frames_idx, durs, 8)[4] > LONG_STEP else "normal"
+    if mode == "mitad":
+        frames_idx, scale = half_frames(frames_idx), 2
+        block = 8
+    elif mode == "tramo":
+        block = 8 if block == "auto" else block
+        frames_idx, durs = best_segment(frames_idx, durs, block)
     if block == "auto":
-        f16 = fit_frames(frames_idx, durs, 16)
-        block = 16 if f16[4] <= 2 else 8
-        frames_idx, durs, tiles, nodes, step = f16 if block == 16 else fit_frames(frames_idx, durs, 8)
+        # el que conserve más fotogramas; si empatan, 16 (menos piezas). Antes se aceptaba 16 con la mitad de fotogramas
+        # para evitar cortes con la cámara cerca, pero eso ya lo resuelve el parche de profundidad (mcss_depth.cpp)
+        f16, f8 = fit_frames(frames_idx, durs, 16), fit_frames(frames_idx, durs, 8)
+        block = 16 if f16[4] <= f8[4] else 8
+        frames_idx, durs, tiles, nodes, step = f16 if block == 16 else f8
     else:
         frames_idx, durs, tiles, nodes, step = fit_frames(frames_idx, durs, block)
-    feet = max(i // 96 for px in frames_idx for i, v in enumerate(px) if v)       # fila de los pies = punto de apoyo
+    feet = max(i // 96 for px in full for i, v in enumerate(px) if v)             # fila de los pies = punto de apoyo
     sequences = []
     for _, seq in nodes:
         s = []
@@ -410,12 +550,12 @@ def side_files(templates, frames_idx, durs, block=8):
             else:
                 s.append((d, idx))
         sequences.append(s)
-    nodes_xy = [(gx * block - 48, gy * block - (feet + 1)) for (gx, gy), _ in nodes]
-    files = [ncgr_replace(templates[0], tiled96(frames_idx[0])), b"", ncgr_replace(templates[2], texture(tiles, block)), b"",
-             make_ncer(len(tiles)), make_nanr(sequences), make_nmcr(nodes_xy), make_nmar(sum(durs)),
-             make_bin(len(tiles), frames_idx, block)]
+    nodes_xy = [(gx * block * scale - 48, gy * block * scale - (feet + 1)) for (gx, gy), _ in nodes]
+    files = [ncgr_replace(templates[0], tiled96(full[0])), b"", ncgr_replace(templates[2], texture(tiles, block)), b"",
+             make_ncer(len(tiles)), make_nanr(sequences, scale), make_nmcr(nodes_xy), make_nmar(sum(durs)),
+             make_bin(len(tiles), full, block)]
     info = {"frames": len(frames_idx), "step": step, "tiles": len(tiles), "nodes": len(nodes), "ticks": sum(durs),
-            "block": block}
+            "block": block, "mode": mode}
     return files, info
 
 
@@ -470,7 +610,7 @@ def write_file(data: bytearray, r: "rom.Rom", path: str, content: bytes) -> str:
     return f"al final ({new:#x}); zona DSi movida al final de la ROM"
 
 
-def _species_files(files, base, folder, name, static, log, block):
+def _species_files(files, base, folder, name, static, log, block, mode="auto"):
     """Los 20 archivos nuevos de una especie (sobre los suyos de la ROM) y la información de cada vista."""
     views = {}
     for side, (front, shiny) in ((0, ("frente", "frente_shiny")), (9, ("espalda", "espalda_shiny"))):
@@ -490,9 +630,11 @@ def _species_files(files, base, folder, name, static, log, block):
     new, info = list(files[base:base + FILES_PER_SPECIES]), {}
     for side, (frames, _) in views.items():
         new[side:side + 9], info[side] = side_files(files[base + side:base + side + 9], [to_idx(px) for px, _ in frames],
-                                                    ds_durations([ms for _, ms in frames]), block)
+                                                    ds_durations([ms for _, ms in frames]), block,
+                                                    mode if len(frames) > 1 else "normal")
         i = info[side]
         log(f"  {'frente' if side == 0 else 'espalda'}: {i['frames']} fotogramas"
+            + (f" ({i['mode']})" if i["mode"] != "normal" else "")
             + (f" (uno de cada {i['step']})" if i["step"] > 1 else "")
             + f", {i['tiles']}/{capacity(i['block'])} bloques de {i['block']}x{i['block']}, {i['nodes']} piezas, ciclo de {i['ticks']} fotogramas del DS")
     new[18] = nclr_replace(files[base + 18], normal)
@@ -506,9 +648,10 @@ def missing(folder: str, name: str) -> list:
     return [p for p in pngs if not os.path.exists(os.path.join(folder, p))]
 
 
-def convert_many(rom_path: str, out_path: str, pairs, folder: str, static: bool = False, log=print, block="auto") -> dict:
+def convert_many(rom_path: str, out_path: str, pairs, folder: str, static: bool = False, log=print, block="auto",
+                 modes=None) -> dict:
     """Pone los sprites de varias especies [(nº de especie, nombre en Showdown)] y escribe la ROM una sola vez.
-    Las que no tienen sus 4 PNG en la carpeta se saltan."""
+    Las que no tienen sus 4 PNG en la carpeta se saltan. modes: {nombre: "mitad" | "tramo"} (ver side_files)."""
     r = rom.Rom(rom_path)
     files = r.narc(SPRITES)
     new, done = list(files), {}
@@ -519,7 +662,8 @@ def convert_many(rom_path: str, out_path: str, pairs, folder: str, static: bool 
             continue
         log(f"#{species} {name}")
         base = species * FILES_PER_SPECIES
-        new[base:base + FILES_PER_SPECIES], done[species] = _species_files(files, base, folder, name, static, log, block)
+        new[base:base + FILES_PER_SPECIES], done[species] = _species_files(files, base, folder, name, static, log, block,
+                                                                           (modes or {}).get(name, "auto"))
     if not done:
         raise SystemExit("ninguna especie convertida")
     data = bytearray(r.data)
@@ -531,8 +675,8 @@ def convert_many(rom_path: str, out_path: str, pairs, folder: str, static: bool 
 
 
 def convert(rom_path: str, out_path: str, species: int, folder: str, name: str, static: bool = False, log=print,
-            block="auto") -> dict:
-    return convert_many(rom_path, out_path, [(species, name)], folder, static, log, block)[species]
+            block="auto", mode="auto") -> dict:
+    return convert_many(rom_path, out_path, [(species, name)], folder, static, log, block, {name: mode})[species]
 
 
 def showdown_id(name: str) -> str:
@@ -567,11 +711,19 @@ def main() -> None:
     c.add_argument("--especie", type=int, required=True, help="nº de la especie cuyo sprite se reemplaza")
     c.add_argument("--nombre", required=True, help="nombre en Showdown (sylveon, tapukoko...)")
     c.add_argument("--carpeta", default=CACHE); c.add_argument("--fijo", action="store_true", help="sin animación")
+    c.add_argument("--modo", choices=("auto", "normal", "mitad", "tramo"), default="auto",
+                   help="animaciones que no caben: normal = uno de cada N fotogramas; mitad = media resolución dibujada al"
+                        " doble; tramo = un trozo en ida y vuelta; auto (por defecto) = tramo si normal saltaría más de"
+                        f" {LONG_STEP} fotogramas")
     lt = sub.add_parser("lote", help="todas las especies de un rango, con el nombre que tienen en la ROM")
     lt.add_argument("--rom", required=True); lt.add_argument("--salida", required=True)
     lt.add_argument("--desde", type=int, required=True); lt.add_argument("--hasta", type=int, required=True)
     lt.add_argument("--carpeta", default=CACHE); lt.add_argument("--fijo", action="store_true", help="sin animación")
     lt.add_argument("--sin-descargar", action="store_true", help="usar solo lo que ya está en la carpeta")
+    lt.add_argument("--mitad", default="", help="nombres separados por comas: media resolución dibujada al doble")
+    lt.add_argument("--tramo", default="", help="nombres separados por comas: un trozo de la animación en ida y vuelta")
+    lt.add_argument("--normal", default="", help="nombres separados por comas: uno de cada N fotogramas (sin tramo)")
+    # el resto, "auto": tramo solo si normal se vería a saltos
     for p in (c, lt):
         p.add_argument("--bloque", choices=("auto", "8", "16"), default="auto",
                        help="tamaño de las piezas: 8 = todos los fotogramas; 16 = menos piezas (menos cortes con la cámara"
@@ -590,9 +742,10 @@ def main() -> None:
         if not a.sin_descargar:
             for _, n in pairs:
                 download(n, a.carpeta)
-        convert_many(a.rom, a.salida, pairs, a.carpeta, a.fijo, block=block)
+        modes = {n: m for m in ("mitad", "tramo", "normal") for n in getattr(a, m).split(",") if n}
+        convert_many(a.rom, a.salida, pairs, a.carpeta, a.fijo, block=block, modes=modes)
     else:
-        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo, block=block)
+        convert(a.rom, a.salida, a.especie, a.carpeta, a.nombre, a.fijo, block=block, mode=a.modo)
 
 
 if __name__ == "__main__":
