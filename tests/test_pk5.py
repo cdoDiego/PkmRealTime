@@ -34,11 +34,13 @@ def make_mon(moves=(33, 39, 0, 0)):
     struct.pack_into("<H", p, 6, pk5.checksum(p))
     return pk5.encrypt(p)
 
+import gamedata
+TACKLE_PP = gamedata.DATA["move_pp"][33]
 for _ in range(100):
     enc = make_mon()
     s = pk5.summary(pk5.decrypt(pk5.heal(enc)))
     assert s["hp"] == 23 and s["status"] == "none" and s["valid"], s
-    assert s["pp"] == [35, 48, 0, 0], s["pp"]                     # Placaje 35; Látigo 30 * 8 // 5 = 48
+    assert s["pp"] == [TACKLE_PP, 48, 0, 0], s["pp"]              # Placaje 35 (30 en Redux); Látigo 30 * 8 // 5 = 48
 
     s = pk5.summary(pk5.decrypt(pk5.set_item(enc, 234)))          # Restos
     assert s["held_item"] == 234 and s["valid"] and s["hp"] == 5

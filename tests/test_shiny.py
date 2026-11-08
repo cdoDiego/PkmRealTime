@@ -6,7 +6,7 @@ import bridge, config, rom_compare
 
 addr, orig = bridge.SHINY_PATCH["IRDO"]
 eff = lambda b: (b[0] if b[-2:] == bytes.fromhex("0026") else b[0] * ((1 << (int.from_bytes(b[-2:], "little") >> 6)) - 1))
-for odds in (4000, 1000, 100, 32, 10, 2):
+for odds in [o for o in (4000, 1000, 100, 32, 10, 2) if o < bridge.shiny_base()]:   # Redux: base 512
     b = bytes.fromhex(bridge.shiny_patch_bytes(orig, bridge.shiny_rolls(odds)))
     assert len(b) == len(bytes.fromhex(orig)) and b[1:-2] == bytes.fromhex(orig)[1:-2]   # solo cambian los extremos
     p = 1 - (1 - 1 / bridge.shiny_base()) ** eff(b)
@@ -15,7 +15,9 @@ for odds in (4000, 1000, 100, 32, 10, 2):
     assert b[-2:] == bytes.fromhex("0026") or (sh & 0xF83F) == 0                            # lsls r0, r0, #s
 
 bridge.game.update(game={"code": "IRDO"}, compat={"shiny": True})
-assert bridge.shiny_command(100).startswith(f"P {addr:#x} {orig} 52")
+assert bridge.shiny_command(100) == f"P {addr:#x} {orig} {bridge.shiny_patch_bytes(orig, bridge.shiny_rolls(100))}"
+if bridge.shiny_base() == 8192:
+    assert bridge.shiny_command(100).startswith(f"P {addr:#x} {orig} 52")   # 82 tiradas con 1/8192
 assert bridge.shiny_command(None) == f"P {addr:#x} {orig} {orig}" and bridge.shiny_odds is None
 for bad in (1, 0):
     try:

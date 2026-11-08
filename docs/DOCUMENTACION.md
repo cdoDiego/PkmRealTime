@@ -618,6 +618,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tests/test_field_script.py` | Pruebas de los guiones propios (combates forzados y clima) |
 | `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
+| `python tools/merge_redux.py --original W2.nds --redux Redux.nds --base Gen6.nds --salida Mezcla.nds` | Lleva los datos y parches de Redux encima de White2Upgrade (ver "Redux sobre White2Upgrade") |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
 | `python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida Gen6.nds --desde 650 --hasta 721` | Todas las especies del rango con su nombre de la ROM: baja de Showdown lo que falte y escribe la ROM una vez |
@@ -953,6 +954,34 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
 - Sus sprites de Gen 6 son fijos (piezas genéricas) y quedan algo elevados. `sprites_gen5.py lote --desde 650 --hasta 721`
   los sustituye por los de Showdown: 52 animados y 20 fijos (los que no tienen GIF), todos apoyados en el suelo.
 
+### Redux sobre White2Upgrade (08-nov, probado en el juego)
+
+`tools/merge_redux.py` compara Redux v1.4.1 con la W2 USA original y lleva lo que cambió a una ROM de White2Upgrade
+(la de los sprites de Gen 6). Resultado: `ModRom/White2Upgrade Redux.nds`. Decisiones del usuario: **Redux manda** en
+las especies 1-649, y **sus movimientos de Gen 7-9 se quedan** encima de los viejos (Triple Axel en Triple Kick...).
+
+| Qué | De dónde |
+| --- | --- |
+| Especies 1-649 (estadísticas, tipos, habilidades, MT, movimientos por nivel) y sus formas | Redux; los campos de formas (`0x1C`-`0x20`), de White2Upgrade (megas). Las formas de la original (685-708) están en 722+ |
+| Especies 650-721, megas y formas nuevas, movimientos 560-621 | White2Upgrade |
+| Evoluciones | Las de Redux en el formato de 8 huecos de White2Upgrade, más las que van a especies nuevas (Eevee → Sylveon) |
+| Movimientos 0-559 | Redux donde cambia (también nombres, descripciones y mensajes, línea por línea); el resto, White2Upgrade |
+| Objetos, entrenadores (891), encuentros, guiones, textos de la historia y 21 archivos más | Redux |
+| Iconos (`a/0/0/7`) | White2Upgrade (usa su propio mapa de paletas) |
+| Tipo Hada (overlays 167, 168, 207, 255, 265) | White2Upgrade: Redux lo parchea en las mismas direcciones (los dos vienen del parche de MeroMero) |
+| arm9 | Redux desde `0x02005000`: variocolor 1/512, lista de MT, MO que se pueden olvidar, `PML_GenPID`, gráficos de objetos, clases de entrenador. No: el arranque (cada uno lo arregla a su manera) ni su código de iconos Hada (`0x02093BF0`, solo lo llama su overlay 255) |
+| Overlays 36 y 166 | Redux: Grutas Ocultas, fenómenos, polvaredas, entrenadores del entorno, Recogida |
+| Overlay 167 fuera del tipo Hada | Redux: `0x021C7FF2` (`movs r1, #10` → `#20`) y `0x021DA2F4` (quita una entrada de una tabla de manejadores); sin identificar |
+
+- White2Upgrade guarda el arm9 y los overlays **sin comprimir**, y sus parches se aplican al arrancar: los de Redux se
+  escriben en su sitio comprobando que la base tenga ahí lo mismo que la original.
+- Moonblast (y otros 9) quedan dos veces: en el número de Redux (296) y en el de White2Upgrade (585).
+- Textos: se copian las líneas cifradas tal cual (cada una se cifra sola), sin descifrar.
+- El puente reconoce la ROM también por una huella de la ROM entera (`file_crc`): las herramientas no cambian el CRC
+  de la cabecera y antes no regeneraba `gen5_data.json`.
+- Validado en el juego: partida nueva (Oshawott con Caparazón de Redux), combate contra la Chica 181 de Redux (Azurill
+  Normal/Hada), registro, `battle_set_hp`, control del rival con ataques y cambio tras debilitarse.
+
 ## 7. API
 
 Todas las peticiones llevan la cabecera `x-token: dev-token-cambiame`.
@@ -1242,6 +1271,7 @@ Notas:
 | 29-oct | Ruleta (MVP): `effects.py` (catálogo de efectos reutilizable), `roulette.py` (premios en `roulette.json`, elección por peso), `GET/PUT /roulette`, `POST /roulette/spin`, páginas `ruleta.html` (configurar y girar) y `ruleta-view.html` (rueda para OBS). Validado en el juego: gira en el overlay y aplica el premio. Pendiente: acomodar opciones y diseño. |
 | 29-oct | Rendimiento: el puente tardaba ~11 ms por consulta (descifraba las cajas cada vez) y el juego esperaba; ahora 0,4 ms con memoria de lo ya descifrado. Lua: hex con tabla y lectura en bloque (`read_bytes_as_binary_string`, comprobada al arrancar). Validado: sin cortes en la música y se nota la velocidad 200 %. |
 | 30-oct | Probabilidad de variocolor en vivo (`set_shiny_odds`): parche de las tiradas de PID de `FieldEncount_CreateWildPkm` (overlay 36), comando `P` del Lua (parche que se mantiene), firma `shiny`. Validado: con 1/2 salió variocolor al 4.º encuentro; se reaplica tras los combates y se quita limpio. Premio de ruleta "Hora variocolor" (eventos con `after`). |
+| 08-nov | **Redux sobre White2Upgrade** (`tools/merge_redux.py`): especies, movimientos, entrenadores, guiones y parches de Redux encima de White2Upgrade con los sprites de Gen 6; Redux manda en 1-649. El puente regenera los datos aunque el CRC de la cabecera no cambie (`file_crc`). Probado: combate contra entrenador de Redux con control del rival. Paso 3 también probado (Gen 6: regalos, registro, rival). |
 | 07-nov | **Sprites de Gen 6 completos y sin cortes**: `sprites_gen5.py lote` convierte 650-721 de una vez (52 animados, 20 fijos). Parche `mcss_depth.cpp` (+ `mcss.esdb.yml`, símbolos que White2Upgrade no nombra): las piezas marcadas no se van al fondo, así que Yveltal y Talonflame ya no se cortan con la cámara cerca; los originales no cambian. **Sin pausas en animaciones largas**: modos `auto`/`tramo`/`mitad`, tramo seguido en bucle o ida y vuelta, cuadritos parecidos juntados con un margen del 10 %; Klefki y Volcanion fluidos. |
 | 06-nov | **Pokédex de White2Upgrade protegida** (`tools/w2u_build/patches/dex_limit.cpp`): las especies 673-721 ya no pisan el guardado (desvío de `PML_PkmIsBadMonsNo` en 4 funciones). Validado con Sylveon: 0 bytes distintos en el bloque tras verlo y capturarlo. `build.sh` aplica los parches de `patches/` y saca el volcado del módulo. |
 | 06-nov | **White2Upgrade compilado y probado** (`tools/w2u_build/`, Docker): arreglado el ARM9 marcado como comprimido (pantalla en blanco). Indicador de menú relativo al puntero base (`0x0223E3D5` en White2Upgrade). Greninja (658) en combate forzado, capturado y con su GIF de Showdown animado. `sprites_gen5.py`: piezas de 16×16 y `--bloque auto` (menos cortes al acercarse la cámara). |
@@ -1373,8 +1403,15 @@ Notas:
 - [x] Arranca con el ARM9 arreglado; carga el save de W2 y el combate funciona.
 - [x] Puente: 721 especies, `data_ok`, modo `map`/`menu` correcto y las 13 firmas en `true`.
 - [x] Combate salvaje forzado contra Greninja; captura y registro en la Pokédex.
-- [ ] Regalo (`give_pokemon`) de una especie de Gen 6 al equipo y a la caja.
-- [ ] Registro de turnos y control del rival con una especie de Gen 6.
+- [x] Regalo (`give_pokemon`) de una especie de Gen 6 al equipo y a la caja (07-nov: Sylveon y Greninja).
+- [x] Registro de turnos y control del rival con una especie de Gen 6 (Klefki: Beso Drenaje "no es muy eficaz" contra
+  Acero, Púas con prioridad de Bromista).
+
+### Redux sobre White2Upgrade (en el juego)
+- [x] Arranca, partida nueva, el puente regenera los datos (variocolor 128, 891 entrenadores) y las firmas coinciden.
+- [x] Combate contra entrenador de Redux, registro y control del rival (ataque y cambio tras debilitarse).
+- [ ] Lista de MT, Grutas Ocultas y Recogida como en Redux.
+- [ ] Un salvaje variocolor (1/512) y una especie de Gen 6 salvaje o regalada.
 - [x] Protección de la Pokédex (673-721): Sylveon visto y capturado sin tocar ningún byte del bloque.
 - [ ] Pokédex completa para 673-721 (bloque extra), si hace falta.
 

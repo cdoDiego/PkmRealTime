@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import struct
+import zlib
 
 # Rutas dentro de la ROM de B2/W2 (iguales en todas las regiones)
 PERSONAL = "a/0/1/6"     # datos de cada especie (0x4C bytes)
@@ -68,6 +69,11 @@ class Rom:
         self._fnt, _ = struct.unpack_from("<II", d, 0x40)
         self._fat, _ = struct.unpack_from("<II", d, 0x48)
         self._paths = self._read_fnt()
+
+    @property
+    def file_crc(self) -> int:
+        """Huella de la ROM entera: las herramientas que cambian archivos (sprites, merge_redux) no tocan la cabecera."""
+        return zlib.crc32(self.data)
 
     # --- sistema de archivos NitroFS
     def _read_fnt(self) -> dict[str, int]:
@@ -243,7 +249,8 @@ def build_data(rom: Rom) -> dict:
                             "growth": e[0x15], "abilities": [e[0x18], e[0x19], e[0x1A]], "learnset": learn[sp]}
     return {
         "_fuente": f"ROM {rom.title} {rom.code} (v{rom.version}, crc cabecera {rom.header_crc:04x})",
-        "rom": {"title": rom.title, "code": rom.code, "version": rom.version, "header_crc": rom.header_crc},
+        "rom": {"title": rom.title, "code": rom.code, "version": rom.version, "header_crc": rom.header_crc,
+                "file_crc": rom.file_crc},
         "exp": EXP_TABLES,
         "species": species,
         "shiny_threshold": rom.shiny_threshold(),

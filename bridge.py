@@ -645,7 +645,8 @@ def prepare_data() -> None:
     import rom
     r = rom.Rom(path)
     info = gamedata.rom_info()
-    if info.get("code") == r.code and info.get("header_crc") == r.header_crc and "shiny_threshold" in gamedata.DATA:
+    if info.get("code") == r.code and info.get("header_crc") == r.header_crc \
+            and info.get("file_crc") == r.file_crc and "shiny_threshold" in gamedata.DATA:
         print(f"Datos del juego: {r.title} {r.code} (al día)")
         return
     print(f"Generando datos del juego desde {r.title} {r.code}...")
