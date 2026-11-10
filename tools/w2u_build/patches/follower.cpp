@@ -66,6 +66,11 @@ bool setupNpcFollower(void *gameData, u8 index, u8 isPersistent, u32 originActor
 void TryRespawnFollowActor(void *gameData, u32 behind);
 void *FindFieldActor(void *mmSys, u16 id);
 void DeleteActor(void *actor);
+struct ShadowOffset {
+    s32 x, y, z;
+};
+void CopyActorPosOffset(void *actor, ShadowOffset *offset);
+const u16 *GetActorMdlInfo(void *actor);    // FieldActorConfig: el código de objeto (uid) va primero
 }
 
 static void *sGameData;              // GameData (uno durante toda la partida), para ActorPairEnd
@@ -194,6 +199,16 @@ bool THUMB_BRANCH_LINK_12_0x216A5F2(void *gameData, u8 index, u8 isPersistent, u
         removeOurs(gameData, eventWork);
     }
     return setupNpcFollower(gameData, index, isPersistent, originActorId, objCode, scrId, trainerId);
+}
+
+// FldeffShadow_Draw (ov36): la sombra se pone con el mismo desplazamiento que el modelo (wPosOffsetY de la tabla de
+// modelos). follower_models.py baja los modelos de Pokémon para que no floten; su sombra se queda en el suelo, al nivel
+// de la del entrenador
+void THUMB_BRANCH_LINK_36_0x21A3D90(void *actor, ShadowOffset *offset) {
+    CopyActorPosOffset(actor, offset);
+    if (*GetActorMdlInfo(actor) >= OBJ_CODE_POKEMON_MIN) {
+        offset->y = 0;
+    }
 }
 
 // Scrcmd_PairSys_ActorPairEnd (ov12): no se aplica al nuestro (lo dejaría quieto en el sitio)

@@ -619,6 +619,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/symbol_offset.py dumps\x.bin symbols.txt` | Desplazamiento de los símbolos de Black 2 (pokebw2) en un volcado |
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 | `python tools/merge_redux.py --original W2.nds --redux Redux.nds --base Gen6.nds --salida Mezcla.nds` | Lleva los datos y parches de Redux encima de White2Upgrade (ver "Redux sobre White2Upgrade") |
+| `python tools/follower_models.py --rom Mezcla.nds` | Baja los modelos de Pokémon que caminan (-4) para que pisen su sombra; va al final de la cadena (ver "Pokémon que te sigue") |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
 | `python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida Gen6.nds --desde 650 --hasta 721` | Todas las especies del rango con su nombre de la ROM: baja de Showdown lo que falte y escribe la ROM una vez |
@@ -1020,7 +1021,13 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   como nuestro (partidas guardadas con el prototipo).
 - Puente: `set_follower` con `mode: "on"` / `"off"` (sin `obj_code`). Al apagarlo se va enseguida; al encenderlo
   aparece en el siguiente mapa.
-- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py`). Frente a la ROM
+- Los modelos de Pokémon se dibujan por encima de su sombra y parecen flotar. `tools/follower_models.py` pone
+  `wPosOffsetY` = -4 (tabla `a/0/4/7`, s8 en +14 de cada registro de 28 bytes) en los de tamaño normal: baja el dibujo
+  y también la sombra, porque `FldeffShadow_Draw` la coloca con el mismo desplazamiento (`CopyActorPosOffset`). Por eso
+  `follower.cpp` engancha esa llamada (`0x21A3D90`, overlay 36) y, en los modelos de Pokémon, deja la sombra a la altura
+  de la del entrenador. Probado con Eevee (-4, bien), Pidove (-8, algo bajo) y Pikachu (0, flota). Con el gancho
+  (09-nov), Eevee y Pidove pisan su sombra y esta queda al nivel de la del entrenador.
+- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py` → `follower_models.py`). Frente a la ROM
   anterior solo cambia `patches/White2Upgrade.dll`.
 - Validado (08-nov): sale al cruzar una puerta; salvajes individuales y entrenadores normales, sin curar al terminar;
   bici (se queda algo atrás) y Surf (te sigue por el agua); cambia o desaparece con el primero del equipo al cruzar una
@@ -1028,7 +1035,7 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   nada; `set_follower` off (se va al momento) y on.
 - Ojo: cada ROM nueva cambia la huella (CRC de cabecera): hay que reiniciar el puente para que regenere sus datos.
 - Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta, modelos de las
-  especies que faltan y que no parezca que flota.
+  especies que faltan y revisar los modelos grandes (billboardSize 2).
 
 ## 7. API
 
