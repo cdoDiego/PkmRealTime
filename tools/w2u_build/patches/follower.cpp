@@ -6,7 +6,8 @@
 //
 // Aquí se usa ese sistema para el primero del equipo:
 //   - al entrar en un mapa (EventWarpSequence_CreateIn, justo antes de TryRespawnFollowActor) se pone como acompañante
-//     el modelo del primero del equipo, o se quita si es un huevo o no tiene modelo;
+//     el modelo del primero del equipo, o se quita si es un huevo o no tiene modelo; si el primero cambia en el mismo
+//     mapa, el modelo cambia al dar el siguiente paso (refreshLead);
 //   - el resto del juego no lo cuenta como compañero: con un aliado de la historia el juego cura el equipo tras cada
 //     combate, hace los combates salvajes dobles, no deja usar la bici, Surf, Cascada, Buceo ni la Cuerda Huida, y
 //     algunos guiones cambian. Por eso GameData_CheckPairFlag y las órdenes de guion que leen la bandera 0x966 dicen
@@ -51,6 +52,11 @@
 #define DIR_RIGHT 3
 #define FOLLOWER_SIDE_SHIFT 12          // cuánto se aparta de lado un modelo grande (una casilla son 16)
 #define FOLLOWER_SHIFT_STEP 1           // y cuánto avanza cada vez que se dibuja
+#define LEAD_KEY_RARE (1u << 18)        // leadKey: variocolor
+#define LEAD_KEY_EGG (1u << 19)         // huevo
+#define LEAD_KEY_EMPTY (1u << 20)       // equipo vacío
+#define LEAD_KEY_OFF (1u << 21)         // FLAG_FOLLOWER_OFF
+#define LEAD_KEY_UNKNOWN 0xFFFFFFFFu    // aún sin mirar
 #define PKM_PARAM_SPECIES 0x05
 #define PKM_PARAM_IS_EGG 0x4C
 #define PKM_PARAM_SEX 0x6E
@@ -175,6 +181,51 @@ static void removeOurs(void *gameData, void *eventWork) {
     *EventWork_GetWkPtr(eventWork, WORK_PAIR) = FOLLOWER_INDEX_NONE;
 }
 
+// Lo que decide el modelo del primero del equipo (y si está apagado), barato de leer en cada paso; cuando cambia se
+// vuelve a buscar el modelo (leadObjCode lee TPOKE del cartucho)
+static u32 leadKey(void *gameData, void *eventWork) {
+    u32 key = EventWork_FlagGet(eventWork, FLAG_FOLLOWER_OFF) ? LEAD_KEY_OFF : 0;
+    void *party = GameData_GetParty(gameData);
+    if (PokeParty_GetPkmCount(party) == 0) {
+        return key | LEAD_KEY_EMPTY;
+    }
+    void *pkm = PokeParty_GetPkm(party, 0);
+    if (PML_PkmGetParam(pkm, PKM_PARAM_IS_EGG, 0)) {
+        return key | LEAD_KEY_EGG;
+    }
+    return key | PML_PkmGetParam(pkm, PKM_PARAM_SPECIES, 0) | (PML_PkmGetParam(pkm, PKM_PARAM_FORM, 0) & 0x1F) << 11 |
+           (PML_PkmGetParam(pkm, PKM_PARAM_SEX, 0) & 3) << 16 | (PokeParty_IsRare(pkm) ? LEAD_KEY_RARE : 0);
+}
+
+static u32 sLeadKey = LEAD_KEY_UNKNOWN;
+
+// Si cambió el primero del equipo (menú del equipo, caja, evolución, cambio de forma, el puente...) o se encendió o
+// apagó, pone el modelo nuevo sin esperar a cambiar de mapa: borra el personaje y deja que se cree de nuevo
+static void refreshLead(void *gameData, void *eventWork) {
+    u32 key = leadKey(gameData, eventWork);
+    if (key == sLeadKey) {
+        return;
+    }
+    sLeadKey = key;
+    u16 code = (key & LEAD_KEY_OFF) ? 0 : leadObjCode(gameData);
+    if (code == 0) {
+        if (isOurs(eventWork)) {
+            removeOurs(gameData, eventWork);
+        }
+    } else if (isOurs(eventWork)) {
+        FollowWk *wk = GetFieldFollowerCfg(gameData);
+        if (wk->objCode != code) {
+            wk->objCode = code;
+            void *actor = FindFieldActor(GameData_GetMMSys(gameData), FOLLOWER_ACTOR_ID);
+            if (actor) {
+                DeleteActor(actor);
+            }
+        }
+    } else if (setupNpcFollower(gameData, FOLLOWER_INDEX, 1, FOLLOWER_ACTOR_ID, code, 0, 0)) {
+        EventWork_FlagSet(eventWork, FLAG_FOLLOWER_OURS);
+    }
+}
+
 extern "C" {
 
 // Posición de un código de objeto en la tabla de modelos (a/0/4/7). La del juego solo conoce sus tres rangos; se
@@ -211,9 +262,15 @@ bool THUMB_BRANCH_GameData_CheckPairFlag(void *gameData) {
 
 // CheckPerStepEvents (ov36): al dar el primer paso coloca y muestra al que te sigue (updateFollowerModel).
 // Vuelo, Cuerda Huida, Teletransporte y caer debilitado cambian de mapa sin pasar por EventWarpSequence_CreateIn:
-// si el nuestro falta en el mapa, se crea aquí (escondido; updateFollowerModel lo pone a tu lado en este mismo paso)
+// si el nuestro falta en el mapa, se crea aquí (escondido; updateFollowerModel lo pone a tu lado en este mismo paso).
+// Antes se mira si cambió el primero del equipo (refreshLead)
 bool THUMB_BRANCH_LINK_36_0x21821F8(void *gameData) {
+    sGameData = gameData;
     void *eventWork = GameData_GetEventWork(gameData);
+    adoptLegacy(gameData, eventWork);
+    if (!storyPair(eventWork)) {
+        refreshLead(gameData, eventWork);
+    }
     if (isOurs(eventWork) && !FindFieldActor(GameData_GetMMSys(gameData), FOLLOWER_ACTOR_ID)) {
         TryRespawnFollowActor(gameData, 0);
     }

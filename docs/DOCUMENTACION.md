@@ -1013,7 +1013,11 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   16), poco a poco, cambiando `ModelPosOffsetX` del personaje en `CopyActorPosAllAdd` (overlay 36, `0x218EE02`); la
   sombra lee el mismo valor y se mueve con él (`FOLLOWER_SIDE_SHIFT`). Se probó reducirlos a 32x32: se veían
   demasiado pequeños. Validado en el juego (10-nov).
-  Si cambias el primero, el modelo cambia al cruzar la siguiente puerta o cambiar de ruta.
+  Si cambias el primero (menú del equipo, caja, evolución, cambio de forma, el puente), el modelo cambia al dar el
+  siguiente paso (10-nov): en `CheckPerStepEvents` se compara especie, forma, sexo, variocolor, huevo y
+  `FLAG_FOLLOWER_OFF` con lo del paso anterior; si algo cambió se busca el modelo y, si es otro, se borra el personaje
+  y se vuelve a crear en ese mismo paso (como tras Vuelo). `set_follower` también se aplica al dar un paso.
+  Validado en el juego (10-nov).
 - Con un aliado de la historia, el juego cura el equipo tras cada combate, hace dobles los salvajes, no deja usar bici,
   Surf, Cascada, Buceo ni Cuerda Huida, y 16 guiones (Monte Tuerca, Alcantarillas, Ciudad Engobe...) leen la bandera
   `0x966`. Por eso `GameData_CheckPairFlag` (sustituida) y las órdenes `VMStackPushFlag`/`FlagGet` (`0x10`/`0x25`)
@@ -1063,7 +1067,7 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   cada bloque de 2x2. Las de cuadros de 128x128 (Reshiram, Zekrom, Kyurem, Xerneas...) dan 64x64 y van en un modelo
   grande, copia de uno del juego (6 texturas, la derecha reflejada). Las de cuadros más pequeños (Spritzee, Swirlix) se
   centran en uno de 64x64. Pendiente de probar en el juego.
-- Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta.
+- Pendiente: Monte Tuerca con Bianca (aliado de la historia); cambiar el modelo al cerrar el menú, sin esperar al primer paso.
 
 ## 7. API
 
