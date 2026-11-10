@@ -620,6 +620,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 | `python tools/merge_redux.py --original W2.nds --redux Redux.nds --base Gen6.nds --salida Mezcla.nds` | Lleva los datos y parches de Redux encima de White2Upgrade (ver "Redux sobre White2Upgrade") |
 | `python tools/follower_models.py --rom Mezcla.nds` | Baja los modelos de Pokémon que caminan (-4) para que pisen su sombra; va al final de la cadena (ver "Pokémon que te sigue") |
+| `python tools/follower_new.py --rom Mezcla.nds [--hojas carpeta]` | Crea modelos para caminar de las especies que no tienen (códigos `0x1300`+) con las hojas de PokeAvatars; va antes de `follower_models.py` (ver "Pokémon que te sigue") |
 | `python tools/follower_shiny.py --rom Mezcla.nds [--hojas carpeta]` | Añade una copia variocolor de cada modelo de Pokémon que camina (códigos `0x3000`+); va después de `follower_models.py` (ver "Pokémon que te sigue") |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
@@ -1028,8 +1029,8 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   `follower.cpp` engancha esa llamada (`0x21A3D90`, overlay 36) y, en los modelos de Pokémon, deja la sombra a la altura
   de la del entrenador. Probado con Eevee (-4, bien), Pidove (-8, algo bajo) y Pikachu (0, flota). Con el gancho
   (09-nov), Eevee y Pidove pisan su sombra y esta queda al nivel de la del entrenador.
-- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py` → `follower_models.py` →
-  `follower_shiny.py`). Frente a la ROM
+- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py` → `follower_new.py` →
+  `follower_models.py` → `follower_shiny.py`). Frente a la ROM
   anterior solo cambia `patches/White2Upgrade.dll`.
 - Validado (08-nov): sale al cruzar una puerta; salvajes individuales y entrenadores normales, sin curar al terminar;
   bici (se queda algo atrás) y Surf (te sigue por el agua); cambia o desaparece con el primero del equipo al cruzar una
@@ -1044,6 +1045,16 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   sprite de combate (`a/0/0/4`, 18 y 19). El juego solo conoce tres rangos de códigos (`GetIndexOfObjID`: personas,
   `0x1000`-`0x126B` y `0x2000`-`0x200A`), así que `follower.cpp` la sustituye añadiendo el de las copias, y usa la copia
   si `PokeParty_IsRare` dice que el primero es variocolor (y la tabla la tiene). Validado (10-nov): Eevee variocolor te sigue en gris.
+- **Especies sin modelo (10-nov):** 175 de 1-721 no tienen (TPOKE solo llega a 632 y le faltan muchas de Gen 5).
+  `tools/follower_new.py` crea 99 con las hojas de PokeAvatars: cada cuadro de 64x64 es el dibujo HGSS ampliado al doble
+  (al reducirlo, los quietos coinciden píxel a píxel con los modelos del juego). Cada modelo es una copia del de Eevee
+  (8 texturas de 32x32 de 4 bits: espalda, frente, izquierda y derecha, 2 pasos; el segundo paso de la hoja es el mismo
+  dibujo 1 píxel más abajo), con hasta 15 colores de la hoja. Códigos `0x1300`-`0x13FF` en la tabla desde `0x3F0` (256
+  sitios), una entrada nueva en TPOKE por especie (cualquier sexo, forma 0). Las copias variocolor (código + `0x2000`)
+  van desde `0x4F0`: primero las de los 620 del juego y luego las de los 256 sitios nuevos.
+  Validado en el juego (10-nov) con Oshawott y Sylveon.
+  Quedan 76 sin modelo: su hoja no está ampliada al doble (dibujos de Gen 5 más grandes, como Patrat o Snivy) o es de
+  128x128 por cuadro (legendarios). Necesitan un modelo de 64x64, como los grandes del juego.
 - Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta, modelos de las
   especies que faltan y revisar los modelos grandes (billboardSize 2).
 

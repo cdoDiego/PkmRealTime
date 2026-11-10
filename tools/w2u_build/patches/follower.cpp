@@ -35,8 +35,11 @@
 #define OBJ_CODE_SPECIAL_END 0x200B
 #define OBJ_CODE_SPECIAL_INDEX 0x3E5
 #define OBJ_CODE_NPC_END 0x179
-#define OBJ_CODE_SHINY_MIN 0x3000       // copias variocolor de tools/follower_shiny.py, al final de la tabla
-#define OBJ_CODE_SHINY_INDEX 0x3F0
+#define OBJ_CODE_NEW_MIN 0x1300         // modelos de tools/follower_new.py (especies sin modelo), desde la posición
+#define OBJ_CODE_NEW_END 0x1400         // 0x3F0 (256 sitios)
+#define OBJ_CODE_NEW_INDEX 0x3F0
+#define OBJ_CODE_SHINY_OFFSET 0x2000    // copias variocolor de tools/follower_shiny.py: código + esto, desde la
+#define OBJ_CODE_SHINY_INDEX 0x4F0      // posición 0x4F0 (primero las de los del juego y luego las de los nuevos)
 #define OBJ_INDEX_FALLBACK 10           // lo que da el juego con un código que no conoce
 #define PKM_PARAM_SPECIES 0x05
 #define PKM_PARAM_IS_EGG 0x4C
@@ -111,6 +114,17 @@ static bool storyPair(void *eventWork) {
     return EventWork_FlagGet(eventWork, FLAG_PAIR) && !EventWork_FlagGet(eventWork, FLAG_FOLLOWER_OURS);
 }
 
+// Posición de un modelo de Pokémon entre todos (los del juego y luego los nuevos); -1 si no es uno
+static int pokemonSlot(u16 code) {
+    if (code >= OBJ_CODE_POKEMON_MIN && code < OBJ_CODE_POKEMON_END) {
+        return code - OBJ_CODE_POKEMON_MIN;
+    }
+    if (code >= OBJ_CODE_NEW_MIN && code < OBJ_CODE_NEW_END) {
+        return (OBJ_CODE_POKEMON_END - OBJ_CODE_POKEMON_MIN) + code - OBJ_CODE_NEW_MIN;
+    }
+    return -1;
+}
+
 // Modelo del primero del equipo (su copia variocolor si lo es y la ROM la tiene); 0 si es un huevo o no tiene modelo
 static u16 leadObjCode(void *gameData) {
     void *party = GameData_GetParty(gameData);
@@ -129,10 +143,9 @@ static u16 leadObjCode(void *gameData) {
     if (GetFieldPokemonMMdlLUTIndex_(data, species, sex, form) != TPOKE_INDEX_NONE &&
         !IsFieldPokemonSpriteHugeBillboard(gameData, data, species, sex, form)) {
         code = GetPokemonFieldOBJCODE(data, species, sex, form);
-        u32 shinyIndex = OBJ_CODE_SHINY_INDEX + code - OBJ_CODE_POKEMON_MIN;
-        if (PokeParty_IsRare(pkm) && code >= OBJ_CODE_POKEMON_MIN && code < OBJ_CODE_POKEMON_END &&
-            *data->mmodelTable > shinyIndex) {
-            code = OBJ_CODE_SHINY_MIN + code - OBJ_CODE_POKEMON_MIN;
+        if (PokeParty_IsRare(pkm) && pokemonSlot(code) >= 0 &&
+            *data->mmodelTable > OBJ_CODE_SHINY_INDEX + (u32)pokemonSlot(code)) {
+            code += OBJ_CODE_SHINY_OFFSET;
         }
     }
     FreeTPokeData(data);
@@ -157,7 +170,7 @@ static void removeOurs(void *gameData, void *eventWork) {
 extern "C" {
 
 // Posición de un código de objeto en la tabla de modelos (a/0/4/7). La del juego solo conoce sus tres rangos; se
-// añade el de las copias variocolor
+// añaden los de los modelos nuevos y las copias variocolor
 u32 THUMB_BRANCH_GetIndexOfObjID(u16 objCode) {
     if (objCode < OBJ_CODE_NPC_END) {
         return objCode;
@@ -168,8 +181,14 @@ u32 THUMB_BRANCH_GetIndexOfObjID(u16 objCode) {
     if (objCode >= OBJ_CODE_SPECIAL_MIN && objCode < OBJ_CODE_SPECIAL_END) {
         return OBJ_CODE_SPECIAL_INDEX + objCode - OBJ_CODE_SPECIAL_MIN;
     }
-    if (objCode >= OBJ_CODE_SHINY_MIN && objCode < OBJ_CODE_SHINY_MIN + (OBJ_CODE_POKEMON_END - OBJ_CODE_POKEMON_MIN)) {
-        return OBJ_CODE_SHINY_INDEX + objCode - OBJ_CODE_SHINY_MIN;
+    if (objCode >= OBJ_CODE_NEW_MIN && objCode < OBJ_CODE_NEW_END) {
+        return OBJ_CODE_NEW_INDEX + objCode - OBJ_CODE_NEW_MIN;
+    }
+    if (objCode >= OBJ_CODE_SHINY_OFFSET) {
+        int slot = pokemonSlot(objCode - OBJ_CODE_SHINY_OFFSET);
+        if (slot >= 0) {
+            return OBJ_CODE_SHINY_INDEX + slot;
+        }
     }
     return OBJ_INDEX_FALLBACK;
 }

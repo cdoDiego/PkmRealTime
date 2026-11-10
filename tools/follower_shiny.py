@@ -3,8 +3,9 @@
 Uso:  python tools/follower_shiny.py --rom Mezcla.nds --hojas <carpeta de hojas>
 
 B2/W2 solo traen la paleta normal de cada modelo (a/0/4/8, NSBTX de 16 colores). Esta herramienta añade, por cada
-modelo de Pokémon (códigos 0x1000-0x126B), una copia con la paleta variocolor y el código 0x3000 + lo mismo
-(patches/follower.cpp la usa si el primero del equipo es variocolor y sabe dónde está gracias a GetIndexOfObjID).
+modelo de Pokémon (los del juego, 0x1000-0x126B, y los de follower_new.py, 0x1300-0x13FF), una copia con la paleta
+variocolor y el código + 0x2000 (patches/follower.cpp la usa si el primero del equipo es variocolor y sabe dónde está
+gracias a GetIndexOfObjID).
 
 De dónde sale cada color variocolor:
   1. Hojas para caminar estilo HGSS (NNN.png y NNNs.png, NNN_F.png para la forma F; las de PokeAvatars): las dos tienen
@@ -12,7 +13,7 @@ De dónde sale cada color variocolor:
   2. Si el color del modelo no está en la hoja (algunos de Gen 5, dibujados distinto): la paleta normal y la variocolor
      del sprite de combate de la especie (a/0/0/4, archivos 18 y 19).
   3. Si tampoco: se queda igual.
-Va al final de la cadena (después de follower_models.py; las copias heredan su desplazamiento).
+Va al final de la cadena (después de follower_new.py y follower_models.py; las copias heredan su desplazamiento).
 """
 import argparse
 import os
@@ -34,8 +35,10 @@ RECORD = 28
 OFF_RES1 = 16
 POKEMON_FIRST, POKEMON_COUNT = 0x1000, 0x26C   # códigos de Pokémon y su sitio en la tabla (GetIndexOfObjID)
 POKEMON_INDEX = 0x179
-SHINY_FIRST = 0x3000
-SHINY_INDEX = 0x3F0  # donde empiezan en la tabla (follower.cpp, OBJ_CODE_SHINY_INDEX): justo tras los 1008 del juego
+NEW_FIRST, NEW_SLOTS = 0x1300, 0x100          # modelos de follower_new.py
+NEW_INDEX = 0x3F0                             # su sitio en la tabla: justo tras los 1008 del juego
+SHINY_OFFSET = 0x2000                         # código variocolor = código normal + esto
+SHINY_INDEX = NEW_INDEX + NEW_SLOTS           # las copias, tras los nuevos: primero las del juego y luego las nuevas
 NEAR = 12            # distancia máxima (en 5 bits por canal, al cuadrado) para dar un color por el mismo
 DEFAULT_SHEETS = os.path.join(os.path.dirname(ROOT), "..", "PokeAvatars", "src", "public", "img", "pokesprites")
 
@@ -135,17 +138,20 @@ def battle_pairs(sprites: list, species: int) -> dict:
 def add_shiny(table: bytes, gra: list, tpoke: bytes, sheets: str, sprites: list, log=print) -> tuple[bytes, list]:
     count = struct.unpack_from("<I", table, 0)[0]
     uids = {struct.unpack_from("<H", table, 4 + RECORD * i)[0] for i in range(count)}
-    if any(u >= SHINY_FIRST for u in uids if u != 0xFFFF):
+    if any(u >= POKEMON_FIRST + SHINY_OFFSET for u in uids if u != 0xFFFF):
         raise ValueError("la ROM ya tiene los modelos variocolor")
     if count != (len(table) - 4) // RECORD or count != SHINY_INDEX:
-        raise ValueError(f"tabla de modelos inesperada ({count} registros; follower.cpp espera {SHINY_INDEX})")
+        raise ValueError(f"tabla de modelos inesperada ({count} registros; follower.cpp espera {SHINY_INDEX}: "
+                         "¿falta follower_new.py?)")
     by_code = {}
     for i in range(0, len(tpoke) - 7, 8):
         species, _, form, code = struct.unpack_from("<4H", tpoke, i)
         by_code.setdefault(code, (species, form))
     gra, records, total = list(gra), bytearray(), Counter()
-    for code in range(POKEMON_FIRST, POKEMON_FIRST + POKEMON_COUNT):
-        rec = bytearray(table[4 + RECORD * (POKEMON_INDEX + code - POKEMON_FIRST):][:RECORD])
+    slots = [(c, POKEMON_INDEX + c - POKEMON_FIRST) for c in range(POKEMON_FIRST, POKEMON_FIRST + POKEMON_COUNT)]
+    slots += [(c, NEW_INDEX + c - NEW_FIRST) for c in range(NEW_FIRST, NEW_FIRST + NEW_SLOTS)]
+    for code, index in slots:
+        rec = bytearray(table[4 + RECORD * index:][:RECORD])
         res = struct.unpack_from("<H", rec, OFF_RES1)[0]
         nsbtx = gra[res]
         if code in by_code:
@@ -154,12 +160,12 @@ def add_shiny(table: bytes, gra: list, tpoke: bytes, sheets: str, sprites: list,
             new_pal, why = shiny_palette(pal, sheet_pairs(sheets, species, form), battle_pairs(sprites, species))
             total.update(why)
             nsbtx = with_palette(nsbtx, new_pal)
-        struct.pack_into("<H", rec, 0, SHINY_FIRST + code - POKEMON_FIRST)
+        struct.pack_into("<H", rec, 0, code + SHINY_OFFSET)
         struct.pack_into("<H", rec, OFF_RES1, len(gra))
         gra.append(nsbtx)
         records += rec
-    new_table = struct.pack("<I", count + POKEMON_COUNT) + table[4:] + bytes(records)
-    log(f"{POKEMON_COUNT} modelos variocolor (desde {SHINY_FIRST:#x}); colores: {dict(total)}")
+    new_table = struct.pack("<I", count + len(slots)) + table[4:] + bytes(records)
+    log(f"{len(slots)} modelos variocolor (código + {SHINY_OFFSET:#x}); colores: {dict(total)}")
     return new_table, gra
 
 
