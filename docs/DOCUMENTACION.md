@@ -1008,7 +1008,11 @@ Prototipo: evento `set_follower` (`obj_code`; `mode: "off"` lo quita). Guion: `P
 equipo te sigue solo, como en HeartGold, sin depender del puente:
 - Al entrar en un mapa (`EventWarpSequence_CreateIn`, overlay 36, justo antes de `TryRespawnFollowActor`) pone el
   modelo del primero del equipo (`GetPokemonFieldOBJCODE`); si es un huevo o no tiene modelo, lo quita. Los
-  grandes (64x64, como Steelix o Lugia) también te siguen (10-nov; antes se quitaban).
+  grandes (64x64, como Steelix o Lugia) también te siguen (10-nov; antes se quitaban). Son más anchos que una casilla
+  y de lado se metían en el entrenador: mientras miran a un lado se apartan hacia atrás 12 unidades (una casilla son
+  16), poco a poco, cambiando `ModelPosOffsetX` del personaje en `CopyActorPosAllAdd` (overlay 36, `0x218EE02`); la
+  sombra lee el mismo valor y se mueve con él (`FOLLOWER_SIDE_SHIFT`). Se probó reducirlos a 32x32: se veían
+  demasiado pequeños. Validado en el juego (10-nov).
   Si cambias el primero, el modelo cambia al cruzar la siguiente puerta o cambiar de ruta.
 - Con un aliado de la historia, el juego cura el equipo tras cada combate, hace dobles los salvajes, no deja usar bici,
   Surf, Cascada, Buceo ni Cuerda Huida, y 16 guiones (Monte Tuerca, Alcantarillas, Ciudad Engobe...) leen la bandera

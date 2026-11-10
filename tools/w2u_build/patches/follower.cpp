@@ -41,6 +41,16 @@
 #define OBJ_CODE_SHINY_OFFSET 0x2000    // copias variocolor de tools/follower_shiny.py: código + esto, desde la
 #define OBJ_CODE_SHINY_INDEX 0x4F0      // posición 0x4F0 (primero las de los del juego y luego las de los nuevos)
 #define OBJ_INDEX_FALLBACK 10           // lo que da el juego con un código que no conoce
+#define MMODEL_BILLBOARD_SIZE 7         // FieldActorConfig: tamaño del dibujo (2 = 64x64)
+#define MMODEL_OFFSET_X 13              // FieldActorConfig: wPosOffsetX
+#define BILLBOARD_SIZE_64 2
+#define ACTOR_UID 0x08                  // FieldActor: ActorUID
+#define ACTOR_FACE_DIR 0x18             // FieldActor: FaceDir
+#define ACTOR_MODEL_OFFSET_X 0x7E       // FieldActor: ModelPosOffsetX (s8, unidades del mapa)
+#define DIR_LEFT 2
+#define DIR_RIGHT 3
+#define FOLLOWER_SIDE_SHIFT 12          // cuánto se aparta de lado un modelo grande (una casilla son 16)
+#define FOLLOWER_SHIFT_STEP 1           // y cuánto avanza cada vez que se dibuja
 #define PKM_PARAM_SPECIES 0x05
 #define PKM_PARAM_IS_EGG 0x4C
 #define PKM_PARAM_SEX 0x6E
@@ -266,6 +276,33 @@ void THUMB_BRANCH_LINK_36_0x21A3D90(void *actor, ShadowOffset *offset) {
     if (*GetActorMdlInfo(actor) >= OBJ_CODE_POKEMON_MIN) {
         offset->y = 0;
     }
+}
+
+// CopyActorPosAllAdd (ov36): la posición donde se dibuja un personaje (su casilla más ModelPosOffsetX/Y/Z). Los modelos
+// grandes (64x64) son más anchos que una casilla: de lado, el que te sigue se metería en el entrenador. Mientras mira a
+// un lado se aparta hacia atrás FOLLOWER_SIDE_SHIFT unidades (una casilla son 16), poco a poco para que no salte al
+// girar. Se cambia ModelPosOffsetX del personaje, así la sombra (que lo lee) se mueve con él
+void THUMB_BRANCH_LINK_36_0x218EE02(void *actor, ShadowOffset *offset) {
+    u8 *a = (u8 *)actor;
+    const u8 *config = (const u8 *)GetActorMdlInfo(actor);
+    if (*(u16 *)(a + ACTOR_UID) == FOLLOWER_ACTOR_ID && *(const u16 *)config >= OBJ_CODE_POKEMON_MIN &&
+        config[MMODEL_BILLBOARD_SIZE] == BILLBOARD_SIZE_64) {
+        u16 dir = *(u16 *)(a + ACTOR_FACE_DIR);
+        int target = (s8)config[MMODEL_OFFSET_X];
+        if (dir == DIR_LEFT) {
+            target += FOLLOWER_SIDE_SHIFT;          // el entrenador está a su izquierda: se aparta a la derecha
+        } else if (dir == DIR_RIGHT) {
+            target -= FOLLOWER_SIDE_SHIFT;
+        }
+        int x = (s8)a[ACTOR_MODEL_OFFSET_X];
+        if (x < target) {
+            x = (x + FOLLOWER_SHIFT_STEP > target) ? target : x + FOLLOWER_SHIFT_STEP;
+        } else if (x > target) {
+            x = (x - FOLLOWER_SHIFT_STEP < target) ? target : x - FOLLOWER_SHIFT_STEP;
+        }
+        a[ACTOR_MODEL_OFFSET_X] = (u8)(s8)x;
+    }
+    CopyActorPosOffset(actor, offset);
 }
 
 // Scrcmd_PairSys_ActorPairEnd (ov12): no se aplica al nuestro (lo dejaría quieto en el sitio)
