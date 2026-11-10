@@ -620,6 +620,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/rom_compare.py original.nds hack.nds` | Si un romhack cambia el código que usa el puente (overlays y arm9) |
 | `python tools/merge_redux.py --original W2.nds --redux Redux.nds --base Gen6.nds --salida Mezcla.nds` | Lleva los datos y parches de Redux encima de White2Upgrade (ver "Redux sobre White2Upgrade") |
 | `python tools/follower_models.py --rom Mezcla.nds` | Baja los modelos de Pokémon que caminan (-4) para que pisen su sombra; va al final de la cadena (ver "Pokémon que te sigue") |
+| `python tools/follower_shiny.py --rom Mezcla.nds [--hojas carpeta]` | Añade una copia variocolor de cada modelo de Pokémon que camina (códigos `0x3000`+); va después de `follower_models.py` (ver "Pokémon que te sigue") |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
 | `python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida Gen6.nds --desde 650 --hasta 721` | Todas las especies del rango con su nombre de la ROM: baja de Showdown lo que falte y escribe la ROM una vez |
@@ -1027,13 +1028,22 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   `follower.cpp` engancha esa llamada (`0x21A3D90`, overlay 36) y, en los modelos de Pokémon, deja la sombra a la altura
   de la del entrenador. Probado con Eevee (-4, bien), Pidove (-8, algo bajo) y Pikachu (0, flota). Con el gancho
   (09-nov), Eevee y Pidove pisan su sombra y esta queda al nivel de la del entrenador.
-- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py` → `follower_models.py`). Frente a la ROM
+- La cadena se regenera igual que antes (compilar → `sprites_gen5.py lote` → `merge_redux.py` → `follower_models.py` →
+  `follower_shiny.py`). Frente a la ROM
   anterior solo cambia `patches/White2Upgrade.dll`.
 - Validado (08-nov): sale al cruzar una puerta; salvajes individuales y entrenadores normales, sin curar al terminar;
   bici (se queda algo atrás) y Surf (te sigue por el agua); cambia o desaparece con el primero del equipo al cruzar una
   puerta (Eevee, Pidove; Patrat no tiene modelo); guardar y reiniciar; Vuelo (aparece al primer paso); hablarle no hace
   nada; `set_follower` off (se va al momento) y on.
 - Ojo: cada ROM nueva cambia la huella (CRC de cabecera): hay que reiniciar el puente para que regenere sus datos.
+- **Variocolor (10-nov):** B2/W2 solo traen la paleta normal de cada modelo (NSBTX de 16 colores en `a/0/4/8`).
+  `tools/follower_shiny.py` añade 620 copias con la paleta variocolor, con códigos `0x3000`-`0x326B`, al final de la tabla
+  (posiciones `0x3F0`+). Los colores salen de las hojas para caminar de PokeAvatars (`NNN.png`/`NNNs.png`, estilo HGSS,
+  1-721 con formas), que tienen los mismos píxeles en normal y variocolor: el 95 % de los colores de los modelos están
+  tal cual en la hoja. El resto (algunos de Gen 5, dibujados distinto) salen de las paletas normal y variocolor del
+  sprite de combate (`a/0/0/4`, 18 y 19). El juego solo conoce tres rangos de códigos (`GetIndexOfObjID`: personas,
+  `0x1000`-`0x126B` y `0x2000`-`0x200A`), así que `follower.cpp` la sustituye añadiendo el de las copias, y usa la copia
+  si `PokeParty_IsRare` dice que el primero es variocolor (y la tabla la tiene). Validado (10-nov): Eevee variocolor te sigue en gris.
 - Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta, modelos de las
   especies que faltan y revisar los modelos grandes (billboardSize 2).
 

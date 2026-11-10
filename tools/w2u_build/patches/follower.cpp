@@ -29,10 +29,26 @@
 #define TPOKE_INDEX_NONE 0xFFFF
 #define HEAPID_FIELDMAP_TAIL 0x8015    // HEAPID_FIELDMAP, por el final (memoria de usar y tirar)
 #define OBJ_CODE_POKEMON_MIN 0x1000
+#define OBJ_CODE_POKEMON_END 0x126C     // los 620 modelos de Pokémon, en la tabla desde la posición 0x179
+#define OBJ_CODE_POKEMON_INDEX 0x179
+#define OBJ_CODE_SPECIAL_MIN 0x2000     // 11 modelos especiales, desde la posición 0x3E5
+#define OBJ_CODE_SPECIAL_END 0x200B
+#define OBJ_CODE_SPECIAL_INDEX 0x3E5
+#define OBJ_CODE_NPC_END 0x179
+#define OBJ_CODE_SHINY_MIN 0x3000       // copias variocolor de tools/follower_shiny.py, al final de la tabla
+#define OBJ_CODE_SHINY_INDEX 0x3F0
+#define OBJ_INDEX_FALLBACK 10           // lo que da el juego con un código que no conoce
 #define PKM_PARAM_SPECIES 0x05
 #define PKM_PARAM_IS_EGG 0x4C
 #define PKM_PARAM_SEX 0x6E
 #define PKM_PARAM_FORM 0x6F
+
+struct TPokeData {                   // de LoadTPokeData
+    void *entries;
+    u32 *mmodelTable;                // tabla de modelos: primero cuántos hay
+    void *configs;
+    u32 count;
+};
 
 struct FollowWk {                    // FieldFollowWk de pair_sys
     u16 heapId;
@@ -55,12 +71,13 @@ void EventWork_FlagReset(void *eventWork, u16 flag);
 u16 *EventWork_GetWkPtr(void *eventWork, u16 work);
 int PokeParty_GetPkmCount(void *party);
 void *PokeParty_GetPkm(void *party, u32 index);
+bool PokeParty_IsRare(void *pkm);
 u32 PML_PkmGetParam(void *pkm, u32 param, void *buffer);
-void *LoadTPokeData(u16 heapId);
-void FreeTPokeData(void *data);
-u16 GetPokemonFieldOBJCODE(void *data, u16 species, u16 sex, u16 form);
-int GetFieldPokemonMMdlLUTIndex_(const void *data, u16 species, u16 sex, u16 form);
-bool IsFieldPokemonSpriteHugeBillboard(void *gameData, void *data, u16 species, u16 sex, u16 form);
+TPokeData *LoadTPokeData(u16 heapId);
+void FreeTPokeData(TPokeData *data);
+u16 GetPokemonFieldOBJCODE(TPokeData *data, u16 species, u16 sex, u16 form);
+int GetFieldPokemonMMdlLUTIndex_(const TPokeData *data, u16 species, u16 sex, u16 form);
+bool IsFieldPokemonSpriteHugeBillboard(void *gameData, TPokeData *data, u16 species, u16 sex, u16 form);
 bool setupNpcFollower(void *gameData, u8 index, u8 isPersistent, u32 originActorId, u16 objCode, u16 scrId,
                       u16 trainerId);
 void TryRespawnFollowActor(void *gameData, u32 behind);
@@ -94,7 +111,7 @@ static bool storyPair(void *eventWork) {
     return EventWork_FlagGet(eventWork, FLAG_PAIR) && !EventWork_FlagGet(eventWork, FLAG_FOLLOWER_OURS);
 }
 
-// Modelo del primero del equipo; 0 si es un huevo o no tiene modelo
+// Modelo del primero del equipo (su copia variocolor si lo es y la ROM la tiene); 0 si es un huevo o no tiene modelo
 static u16 leadObjCode(void *gameData) {
     void *party = GameData_GetParty(gameData);
     if (PokeParty_GetPkmCount(party) == 0) {
@@ -107,11 +124,16 @@ static u16 leadObjCode(void *gameData) {
     u16 species = PML_PkmGetParam(pkm, PKM_PARAM_SPECIES, 0);
     u16 sex = PML_PkmGetParam(pkm, PKM_PARAM_SEX, 0);
     u16 form = PML_PkmGetParam(pkm, PKM_PARAM_FORM, 0);
-    void *data = LoadTPokeData(HEAPID_FIELDMAP_TAIL);
+    TPokeData *data = LoadTPokeData(HEAPID_FIELDMAP_TAIL);
     u16 code = 0;
     if (GetFieldPokemonMMdlLUTIndex_(data, species, sex, form) != TPOKE_INDEX_NONE &&
         !IsFieldPokemonSpriteHugeBillboard(gameData, data, species, sex, form)) {
         code = GetPokemonFieldOBJCODE(data, species, sex, form);
+        u32 shinyIndex = OBJ_CODE_SHINY_INDEX + code - OBJ_CODE_POKEMON_MIN;
+        if (PokeParty_IsRare(pkm) && code >= OBJ_CODE_POKEMON_MIN && code < OBJ_CODE_POKEMON_END &&
+            *data->mmodelTable > shinyIndex) {
+            code = OBJ_CODE_SHINY_MIN + code - OBJ_CODE_POKEMON_MIN;
+        }
     }
     FreeTPokeData(data);
     return code;
@@ -133,6 +155,24 @@ static void removeOurs(void *gameData, void *eventWork) {
 }
 
 extern "C" {
+
+// Posición de un código de objeto en la tabla de modelos (a/0/4/7). La del juego solo conoce sus tres rangos; se
+// añade el de las copias variocolor
+u32 THUMB_BRANCH_GetIndexOfObjID(u16 objCode) {
+    if (objCode < OBJ_CODE_NPC_END) {
+        return objCode;
+    }
+    if (objCode >= OBJ_CODE_POKEMON_MIN && objCode < OBJ_CODE_POKEMON_END) {
+        return OBJ_CODE_POKEMON_INDEX + objCode - OBJ_CODE_POKEMON_MIN;
+    }
+    if (objCode >= OBJ_CODE_SPECIAL_MIN && objCode < OBJ_CODE_SPECIAL_END) {
+        return OBJ_CODE_SPECIAL_INDEX + objCode - OBJ_CODE_SPECIAL_MIN;
+    }
+    if (objCode >= OBJ_CODE_SHINY_MIN && objCode < OBJ_CODE_SHINY_MIN + (OBJ_CODE_POKEMON_END - OBJ_CODE_POKEMON_MIN)) {
+        return OBJ_CODE_SHINY_INDEX + objCode - OBJ_CODE_SHINY_MIN;
+    }
+    return OBJ_INDEX_FALLBACK;
+}
 
 // Para el resto del juego, el nuestro no es un compañero
 bool THUMB_BRANCH_GameData_CheckPairFlag(void *gameData) {
