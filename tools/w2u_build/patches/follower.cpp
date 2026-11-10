@@ -42,6 +42,7 @@
 #define OBJ_CODE_SHINY_OFFSET 0x2000    // copias variocolor de tools/follower_shiny.py: código + esto, desde la
 #define OBJ_CODE_SHINY_INDEX 0x4F0      // posición 0x4F0 (primero las de los del juego y luego las de los nuevos)
 #define OBJ_INDEX_FALLBACK 10           // lo que da el juego con un código que no conoce
+#define MMODEL_RECORD_SIZE 28           // FieldActorConfig: un registro de la tabla de modelos
 #define MMODEL_BILLBOARD_SIZE 7         // FieldActorConfig: tamaño del dibujo (2 = 64x64)
 #define MMODEL_OFFSET_X 13              // FieldActorConfig: wPosOffsetX
 #define BILLBOARD_SIZE_64 2
@@ -56,6 +57,7 @@
 #define LEAD_KEY_EGG (1u << 19)         // huevo
 #define LEAD_KEY_EMPTY (1u << 20)       // equipo vacío
 #define LEAD_KEY_OFF (1u << 21)         // FLAG_FOLLOWER_OFF
+#define LEAD_KEY_INDOORS (1u << 22)     // dentro de un edificio (los grandes no salen)
 #define LEAD_KEY_UNKNOWN 0xFFFFFFFFu    // aún sin mirar
 #define PKM_PARAM_SPECIES 0x05
 #define PKM_PARAM_IS_EGG 0x4C
@@ -96,6 +98,10 @@ TPokeData *LoadTPokeData(u16 heapId);
 void FreeTPokeData(TPokeData *data);
 u16 GetPokemonFieldOBJCODE(TPokeData *data, u16 species, u16 sex, u16 form);
 int GetFieldPokemonMMdlLUTIndex_(const TPokeData *data, u16 species, u16 sex, u16 form);
+u32 GetIndexOfObjID(u16 objCode);
+void *GameData_GetPlayerState(void *gameData);
+u16 PlayerState_GetZoneID(void *playerState);
+bool GetZoneFlagsEnableCycling(u16 zoneId);
 bool setupNpcFollower(void *gameData, u8 index, u8 isPersistent, u32 originActorId, u16 objCode, u16 scrId,
                       u16 trainerId);
 void TryRespawnFollowActor(void *gameData, u32 behind);
@@ -140,7 +146,20 @@ static int pokemonSlot(u16 code) {
     return -1;
 }
 
-// Modelo del primero del equipo (su copia variocolor si lo es y la ROM la tiene); 0 si es un huevo o no tiene modelo
+// Dentro de un edificio: donde no se puede ir en bici (casas, tiendas, Centros, gimnasios, Torre Sepulcral, Castillo
+// de N, Alcantarillas, Fragata Plasma, Liga...). Las rutas, ciudades, cuevas y casetas entre rutas sí la permiten
+static bool indoors(void *gameData) {
+    return !GetZoneFlagsEnableCycling(PlayerState_GetZoneID(GameData_GetPlayerState(gameData)));
+}
+
+// Un modelo grande (64x64), según su registro en la tabla de modelos (la del principio de TPOKE)
+static bool isBigModel(TPokeData *data, u16 code) {
+    const u8 *configs = (const u8 *)(data->mmodelTable + 1);
+    return configs[GetIndexOfObjID(code) * MMODEL_RECORD_SIZE + MMODEL_BILLBOARD_SIZE] == BILLBOARD_SIZE_64;
+}
+
+// Modelo del primero del equipo (su copia variocolor si lo es y la ROM la tiene); 0 si es un huevo, no tiene modelo o
+// es grande y estás dentro de un edificio
 static u16 leadObjCode(void *gameData) {
     void *party = GameData_GetParty(gameData);
     if (PokeParty_GetPkmCount(party) == 0) {
@@ -160,6 +179,9 @@ static u16 leadObjCode(void *gameData) {
         if (PokeParty_IsRare(pkm) && pokemonSlot(code) >= 0 &&
             *data->mmodelTable > OBJ_CODE_SHINY_INDEX + (u32)pokemonSlot(code)) {
             code += OBJ_CODE_SHINY_OFFSET;
+        }
+        if (indoors(gameData) && isBigModel(data, code)) {
+            code = 0;
         }
     }
     FreeTPokeData(data);
@@ -184,7 +206,8 @@ static void removeOurs(void *gameData, void *eventWork) {
 // Lo que decide el modelo del primero del equipo (y si está apagado), barato de leer en cada paso; cuando cambia se
 // vuelve a buscar el modelo (leadObjCode lee TPOKE del cartucho)
 static u32 leadKey(void *gameData, void *eventWork) {
-    u32 key = EventWork_FlagGet(eventWork, FLAG_FOLLOWER_OFF) ? LEAD_KEY_OFF : 0;
+    u32 key = (EventWork_FlagGet(eventWork, FLAG_FOLLOWER_OFF) ? LEAD_KEY_OFF : 0) |
+              (indoors(gameData) ? LEAD_KEY_INDOORS : 0);
     void *party = GameData_GetParty(gameData);
     if (PokeParty_GetPkmCount(party) == 0) {
         return key | LEAD_KEY_EMPTY;

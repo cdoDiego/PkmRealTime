@@ -10,6 +10,7 @@ doble del tamaño del juego, así que se reducen a la mitad (en cada bloque de 2
   - cuadros de 128x128 (legendarios enormes): modelo grande de 64x64, copia de uno grande del juego (6 texturas; la
     derecha es la izquierda reflejada);
   - cuadros más pequeños: se centran en uno de 64x64 (con los pies abajo) y van como los normales.
+El segundo paso de cada dirección es la columna 1 de la hoja, o la 2 si la hoja es un ciclo de 4 cuadros (step_column).
 Cada uno va con el código 0x1300 + n (en la tabla desde la posición 0x3F0, con sitio para 256: patches/follower.cpp,
 GetIndexOfObjID) y una entrada nueva en TPOKE (especie, cualquier sexo, forma 0).
 Va antes de follower_models.py y follower_shiny.py (que hace también sus copias variocolor).
@@ -78,7 +79,15 @@ def frames_of(sheet) -> tuple[list, dict] | None:
     elif cell not in (SMALL["cell"], BIG["cell"]):
         return None
     half, f = halve(sheet), kind["frame"]
-    return [half.crop((c * f, r * f, c * f + f, r * f + f)) for r, c in kind["frames"]], kind
+    cell_of = lambda r, c: half.crop((c * f, r * f, c * f + f, r * f + f))   # noqa: E731
+    return [cell_of(r, step_column(cell_of, r) if c == 1 else c) for r, c in kind["frames"]], kind
+
+
+def step_column(cell_of, row: int) -> int:
+    """El cuadro del segundo paso de una fila. Las hojas estilo HGSS repiten el primero en la columna 2 (quieto, paso,
+    quieto, el otro paso): el paso es la 1. Las de Gen 6 (Xerneas, Yveltal...) son un ciclo de 4 donde la 1 apenas
+    cambia (Yveltal de frente: igual que la 0): el paso contrario es la 2."""
+    return 1 if cell_of(row, 0).tobytes() == cell_of(row, 2).tobytes() else 2
 
 
 def palette_of(frames) -> list:

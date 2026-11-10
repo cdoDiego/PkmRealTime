@@ -1013,6 +1013,10 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   16), poco a poco, cambiando `ModelPosOffsetX` del personaje en `CopyActorPosAllAdd` (overlay 36, `0x218EE02`); la
   sombra lee el mismo valor y se mueve con él (`FOLLOWER_SIDE_SHIFT`). Se probó reducirlos a 32x32: se veían
   demasiado pequeños. Validado en el juego (10-nov).
+  Dentro de los edificios los grandes no salen (10-nov): se toma como edificio el mapa donde no se puede ir en bici
+  (`GetZoneFlagsEnableCycling`, bit 10 de la palabra `0x1E` de la cabecera de zona). Eso cubre casas, tiendas, Centros,
+  gimnasios, Torre Sepulcral, Castillo de N, Alcantarillas, Fragata Plasma y la Liga; las rutas, ciudades, cuevas y
+  casetas entre rutas sí la permiten. Al salir vuelve solo (al entrar en el mapa o al dar un paso). Validado en el juego (10-nov).
   Si cambias el primero (menú del equipo, caja, evolución, cambio de forma, el puente), el modelo cambia al dar el
   siguiente paso (10-nov): en `CheckPerStepEvents` se compara especie, forma, sexo, variocolor, huevo y
   `FLAG_FOLLOWER_OFF` con lo del paso anterior; si algo cambió se busca el modelo y, si es otro, se borra el personaje
@@ -1066,7 +1070,10 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   pero el dibujo tiene el tamaño de los demás, así que también se reducen a la mitad, con el color que más se repite en
   cada bloque de 2x2. Las de cuadros de 128x128 (Reshiram, Zekrom, Kyurem, Xerneas...) dan 64x64 y van en un modelo
   grande, copia de uno del juego (6 texturas, la derecha reflejada). Las de cuadros más pequeños (Spritzee, Swirlix) se
-  centran en uno de 64x64. Pendiente de probar en el juego.
+  centran en uno de 64x64. Validado en el juego (10-nov).
+  El segundo paso de cada dirección es la columna 1 de la hoja (estilo HGSS: quieto, paso, quieto, el otro paso) o la 2
+  si la columna 2 no repite la 0: las hojas de Gen 6 (Xerneas, Yveltal, Zygarde) son un ciclo de 4 donde la 1 apenas
+  cambia y salían casi sin animación (Yveltal de frente, nada).
 - Pendiente: Monte Tuerca con Bianca (aliado de la historia); cambiar el modelo al cerrar el menú, sin esperar al primer paso.
 
 ## 7. API
