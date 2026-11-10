@@ -3,13 +3,15 @@
 Uso:  python tools/follower_new.py --rom Mezcla.nds [--hojas <carpeta de hojas>]
 
 B2/W2 tienen modelo para 620 Pokémon (TPOKE, a/2/0/8). Esta herramienta crea uno para cada especie de 1-721 que no lo
-tiene, si su hoja (NNN.png de PokeAvatars: 4 filas abajo/izquierda/derecha/arriba de 4 cuadros de 64x64, dibujo HGSS
-ampliado al doble) se puede reducir a 32x32 sin perder nada. Las que son más grandes necesitan un modelo de 64x64 y se
-quedan fuera por ahora.
-
-Cada modelo es una copia del de Eevee (8 texturas de 32x32 de 16 colores: espalda, frente, izquierda y derecha, con 2
-pasos cada una) con el dibujo de la hoja. Va con el código 0x1300 + n (en la tabla desde la posición 0x3F0, con sitio
-para 256: patches/follower.cpp, GetIndexOfObjID) y una entrada nueva en TPOKE (especie, cualquier sexo, forma 0).
+tiene, con su hoja (NNN.png de PokeAvatars: 4 filas abajo/izquierda/derecha/arriba de 4 cuadros). Las hojas están al
+doble del tamaño del juego, así que se reducen a la mitad (en cada bloque de 2x2, el color que más se repite):
+  - cuadros de 64x64 (casi todas): modelo normal de 32x32, copia del de Eevee (8 texturas: espalda, frente, izquierda y
+    derecha, con 2 pasos);
+  - cuadros de 128x128 (legendarios enormes): modelo grande de 64x64, copia de uno grande del juego (6 texturas; la
+    derecha es la izquierda reflejada);
+  - cuadros más pequeños: se centran en uno de 64x64 (con los pies abajo) y van como los normales.
+Cada uno va con el código 0x1300 + n (en la tabla desde la posición 0x3F0, con sitio para 256: patches/follower.cpp,
+GetIndexOfObjID) y una entrada nueva en TPOKE (especie, cualquier sexo, forma 0).
 Va antes de follower_models.py y follower_shiny.py (que hace también sus copias variocolor).
 """
 import argparse
@@ -24,14 +26,16 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import rom                                          # noqa: E402
 from sprites_gen5 import build_narc, write_file     # noqa: E402
 from follower_shiny import (c555, DEFAULT_SHEETS, MMODEL_TBL, MMODEL_GRA, TPOKE, RECORD, OFF_RES1,  # noqa: E402
-                            POKEMON_INDEX, NEW_FIRST, NEW_SLOTS, NEW_INDEX)
+                            POKEMON_FIRST, POKEMON_COUNT, POKEMON_INDEX, NEW_FIRST, NEW_SLOTS, NEW_INDEX)
 
-TEMPLATE_CODE = 0x1086          # Eevee: modelo de 8 texturas (spriteControllerType 14)
 TABLE_COUNT = NEW_INDEX         # registros del juego
-FRAME = 32
-# (fila, columna) de la hoja reducida para cada textura del modelo: arriba, abajo, izquierda, derecha; 2 pasos
-FRAMES = [(3, 0), (3, 1), (0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
-MAX_NOT_DOUBLE = 100            # píxeles de 2x2 que no son iguales: más que esto, la hoja no está ampliada al doble
+OFF_SCENE, OFF_BILLBOARD, OFF_CONTROLLER = 3, 7, 9
+SMALL = {"cell": 64, "frame": 32, "billboard": 0, "controller": 14,   # como Eevee
+         # (fila, columna) de la hoja reducida para cada textura: arriba, abajo, izquierda, derecha; 2 pasos
+         "frames": [(3, 0), (3, 1), (0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]}
+BIG = {"cell": 128, "frame": 64, "billboard": 2, "controller": 13,    # como Steelix o Lugia
+       "frames": [(3, 0), (3, 1), (0, 0), (0, 1), (1, 0), (1, 1)]}
+SCENE_GROUND = 10
 COLORS = 15
 
 
@@ -41,33 +45,40 @@ def _pil():
 
 
 def halve(im):
-    """La hoja reducida a la mitad (cada bloque de 2x2 a un píxel), o None si no está ampliada al doble."""
+    """La imagen a la mitad: cada bloque de 2x2 da el color que más se repite (transparente si lo son 2 o más)."""
     Image = _pil()
     p = im.load()
-    best = None
-    for ox in (0, 1):
-        for oy in (0, 1):
-            bad = sum(1 for y in range(oy, im.height - 1, 2) for x in range(ox, im.width - 1, 2)
-                      if not (p[x, y] == p[x + 1, y] == p[x, y + 1] == p[x + 1, y + 1]))
-            if best is None or bad < best[0]:
-                best = (bad, ox, oy)
-    if best[0] > MAX_NOT_DOUBLE:
-        return None
-    _, ox, oy = best
-    out = Image.new("RGBA", (im.width // 2, im.height // 2))
-    out.paste(im.crop((ox, oy, im.width, im.height)).resize(((im.width - ox) // 2, (im.height - oy) // 2),
-                                                           Image.NEAREST))
+    out = Image.new("RGBA", (im.width // 2, im.height // 2), (0, 0, 0, 0))
+    q = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            block = [p[2 * x + dx, 2 * y + dy] for dy in (0, 1) for dx in (0, 1)]
+            solid = [c for c in block if c[3] > 127]
+            if len(solid) >= 3 or (len(solid) == 2 and block[0][3] > 127):
+                q[x, y] = Counter(solid).most_common(1)[0][0]
     return out
 
 
-def frames_of(sheet) -> list | None:
-    """Las 8 imágenes de 32x32 del modelo, o None si la hoja no sirve."""
-    if sheet.size != (256, 256):
+def frames_of(sheet) -> tuple[list, dict] | None:
+    """Las texturas del modelo y su tipo (SMALL o BIG), o None si la hoja no sirve."""
+    Image = _pil()
+    sheet = sheet.convert("RGBA")
+    cell = sheet.width // 4
+    if sheet.width != sheet.height or sheet.width % 4:
         return None
-    half = halve(sheet.convert("RGBA"))
-    if half is None:
+    kind = BIG if cell == BIG["cell"] else SMALL
+    if cell < SMALL["cell"]:                       # se centra en cuadros de 64x64, con los pies abajo
+        padded = Image.new("RGBA", (4 * SMALL["cell"], 4 * SMALL["cell"]), (0, 0, 0, 0))
+        off = ((SMALL["cell"] - cell) // 2, SMALL["cell"] - cell)
+        for r in range(4):
+            for c in range(4):
+                padded.paste(sheet.crop((c * cell, r * cell, c * cell + cell, r * cell + cell)),
+                             (c * SMALL["cell"] + off[0], r * SMALL["cell"] + off[1]))
+        sheet = padded
+    elif cell not in (SMALL["cell"], BIG["cell"]):
         return None
-    return [half.crop((c * FRAME, r * FRAME, c * FRAME + FRAME, r * FRAME + FRAME)) for r, c in FRAMES]
+    half, f = halve(sheet), kind["frame"]
+    return [half.crop((c * f, r * f, c * f + f, r * f + f)) for r, c in kind["frames"]], kind
 
 
 def palette_of(frames) -> list:
@@ -115,7 +126,7 @@ def build_nsbtx(template: bytes, frames, palette) -> bytes:
     pal = t + struct.unpack_from("<I", template, t + 0x38)[0]
     tex = encode(frames, palette)
     if len(tex) != size:
-        raise ValueError("la plantilla no tiene 8 texturas de 32x32")
+        raise ValueError("la plantilla no tiene las texturas que se esperan")
     d = bytearray(template)
     d[data:data + size] = tex
     colors = [struct.unpack_from("<H", template, pal)[0]] + [c555(*c) for c in palette]
@@ -129,34 +140,47 @@ def missing_species(tpoke: bytes, last: int = 721) -> list:
     return [s for s in range(1, last + 1) if s not in have]
 
 
+def template(table: bytes, gra: list, kind: dict) -> tuple[bytes, bytes]:
+    """Registro y NSBTX de un modelo de Pokémon del juego del tipo pedido (en el suelo, del tamaño y control dados)."""
+    for code in range(POKEMON_FIRST, POKEMON_FIRST + POKEMON_COUNT):
+        rec = table[4 + RECORD * (POKEMON_INDEX + code - POKEMON_FIRST):][:RECORD]
+        kind_of = (rec[OFF_SCENE], rec[OFF_BILLBOARD], rec[OFF_CONTROLLER])
+        if kind_of == (SCENE_GROUND, kind["billboard"], kind["controller"]):
+            return rec, gra[struct.unpack_from("<H", rec, OFF_RES1)[0]]
+    raise ValueError(f"no hay un modelo del juego que sirva de plantilla ({kind['frame']}x{kind['frame']})")
+
+
 def add_models(table: bytes, gra: list, tpoke: bytes, sheets: str, log=print) -> tuple[bytes, list, bytes]:
     Image = _pil()
     count = struct.unpack_from("<I", table, 0)[0]
     if count != TABLE_COUNT or count != (len(table) - 4) // RECORD:
         raise ValueError(f"tabla de modelos inesperada ({count} registros; se esperan {TABLE_COUNT})")
-    template_rec = table[4 + RECORD * (POKEMON_INDEX + TEMPLATE_CODE - 0x1000):][:RECORD]
-    template = gra[struct.unpack_from("<H", template_rec, OFF_RES1)[0]]
-    gra, records, entries, made, skipped = list(gra), bytearray(), bytearray(), [], []
+    templates = {id(k): template(table, gra, k) for k in (SMALL, BIG)}
+    gra, records, entries, made, big, skipped = list(gra), bytearray(), bytearray(), [], [], []
     for species in missing_species(tpoke):
         path = os.path.join(sheets, f"{species:03d}.png")
-        frames = frames_of(Image.open(path)) if os.path.exists(path) else None
-        if frames is None or len(made) == NEW_SLOTS:
+        got = frames_of(Image.open(path)) if os.path.exists(path) else None
+        if got is None or len(made) == NEW_SLOTS:
             skipped.append(species)
             continue
+        frames, kind = got
+        rec_tpl, nsbtx_tpl = templates[id(kind)]
         code = NEW_FIRST + len(made)
-        rec = bytearray(template_rec)
+        rec = bytearray(rec_tpl)
         struct.pack_into("<H", rec, 0, code)
         struct.pack_into("<H", rec, OFF_RES1, len(gra))
-        gra.append(build_nsbtx(template, frames, palette_of(frames)))
+        gra.append(build_nsbtx(nsbtx_tpl, frames, palette_of(frames)))
         records += rec
         entries += struct.pack("<4H", species, 2, 0, code)
         made.append(species)
+        if kind is BIG:
+            big.append(species)
     for n in range(len(made), NEW_SLOTS):         # sitio reservado: nadie lo pide, pero la tabla sigue en orden
-        rec = bytearray(template_rec)
+        rec = bytearray(templates[id(SMALL)][0])
         struct.pack_into("<H", rec, 0, NEW_FIRST + n)
         records += rec
-    log(f"{len(made)} modelos nuevos ({NEW_FIRST:#x}-{NEW_FIRST + len(made) - 1:#x}); sin modelo (hoja grande o "
-        f"sin hoja): {len(skipped)}")
+    log(f"{len(made)} modelos nuevos ({NEW_FIRST:#x}-{NEW_FIRST + len(made) - 1:#x}), {len(big)} grandes {big}; "
+        f"sin modelo: {skipped}")
     return struct.pack("<I", count + NEW_SLOTS) + table[4:] + bytes(records), gra, tpoke + bytes(entries)
 
 

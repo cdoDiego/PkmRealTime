@@ -1007,7 +1007,8 @@ Prototipo: evento `set_follower` (`obj_code`; `mode: "off"` lo quita). Guion: `P
 **Dentro de la ROM (08-nov, validado en el juego): `tools/w2u_build/patches/follower.cpp`.** El primero del
 equipo te sigue solo, como en HeartGold, sin depender del puente:
 - Al entrar en un mapa (`EventWarpSequence_CreateIn`, overlay 36, justo antes de `TryRespawnFollowActor`) pone el
-  modelo del primero del equipo (`GetPokemonFieldOBJCODE`); si es un huevo, no tiene modelo o es enorme, lo quita.
+  modelo del primero del equipo (`GetPokemonFieldOBJCODE`); si es un huevo o no tiene modelo, lo quita. Los
+  grandes (64x64, como Steelix o Lugia) también te siguen (10-nov; antes se quitaban).
   Si cambias el primero, el modelo cambia al cruzar la siguiente puerta o cambiar de ruta.
 - Con un aliado de la historia, el juego cura el equipo tras cada combate, hace dobles los salvajes, no deja usar bici,
   Surf, Cascada, Buceo ni Cuerda Huida, y 16 guiones (Monte Tuerca, Alcantarillas, Ciudad Engobe...) leen la bandera
@@ -1053,10 +1054,12 @@ equipo te sigue solo, como en HeartGold, sin depender del puente:
   sitios), una entrada nueva en TPOKE por especie (cualquier sexo, forma 0). Las copias variocolor (código + `0x2000`)
   van desde `0x4F0`: primero las de los 620 del juego y luego las de los 256 sitios nuevos.
   Validado en el juego (10-nov) con Oshawott y Sylveon.
-  Quedan 76 sin modelo: su hoja no está ampliada al doble (dibujos de Gen 5 más grandes, como Patrat o Snivy) o es de
-  128x128 por cuadro (legendarios). Necesitan un modelo de 64x64, como los grandes del juego.
-- Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta, modelos de las
-  especies que faltan y revisar los modelos grandes (billboardSize 2).
+  Las otras 76 (Patrat, Snivy, Victini... y legendarios) tienen hojas con más detalle: no están ampliadas al doble,
+  pero el dibujo tiene el tamaño de los demás, así que también se reducen a la mitad, con el color que más se repite en
+  cada bloque de 2x2. Las de cuadros de 128x128 (Reshiram, Zekrom, Kyurem, Xerneas...) dan 64x64 y van en un modelo
+  grande, copia de uno del juego (6 texturas, la derecha reflejada). Las de cuadros más pequeños (Spritzee, Swirlix) se
+  centran en uno de 64x64. Pendiente de probar en el juego.
+- Pendiente: Monte Tuerca con Bianca (aliado de la historia), cambiar el modelo sin esperar a la puerta.
 
 ## 7. API
 

@@ -15,13 +15,23 @@ for row in range(4):
     for col in range(4):
         small.putpixel((col * 32 + row, row * 32 + col), RED if row % 2 else BLUE)
 sheet = small.resize((256, 256), Image.NEAREST)
-frames = fn.frames_of(sheet)
-assert len(frames) == 8 and all(f.size == (32, 32) for f in frames)
+frames, kind = fn.frames_of(sheet)
+assert kind is fn.SMALL and len(frames) == 8 and all(f.size == (32, 32) for f in frames)
 assert frames[0].getpixel((3, 0)) == RED          # primera textura: fila 3 (arriba), columna 0
 assert frames[3].getpixel((0, 1)) == BLUE         # cuarta: fila 0 (abajo), columna 1
-noisy = sheet.copy(); [noisy.putpixel((x, 7), RED) for x in range(1, 256, 2)]
-assert fn.frames_of(noisy) is None                # no está ampliada al doble: no sirve
-assert fn.frames_of(sheet.resize((512, 512))) is None
+
+big, kind = fn.frames_of(sheet.resize((512, 512), Image.NEAREST))   # cuadros de 128: modelo grande
+assert kind is fn.BIG and len(big) == 6 and big[0].size == (64, 64)
+small, kind = fn.frames_of(sheet.resize((192, 192), Image.NEAREST)) # cuadros de 48: centrados, pies abajo
+assert kind is fn.SMALL and small[0].size == (32, 32)
+assert fn.frames_of(Image.new("RGBA", (300, 200))) is None
+
+block = Image.new("RGBA", (2, 2), (0, 0, 0, 0))     # bloque de 2x2: el color que más se repite
+for xy in ((0, 0), (1, 0), (0, 1)): block.putpixel(xy, RED)
+block.putpixel((1, 1), BLUE)
+assert fn.halve(block).getpixel((0, 0)) == RED
+thin = Image.new("RGBA", (2, 2), (0, 0, 0, 0)); thin.putpixel((1, 1), BLUE)
+assert fn.halve(thin).getpixel((0, 0))[3] == 0      # un solo píxel de cuatro: transparente
 
 pal = fn.palette_of(frames)
 assert sorted(pal) == sorted([RED[:3], BLUE[:3]])

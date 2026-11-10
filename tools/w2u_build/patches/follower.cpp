@@ -80,7 +80,6 @@ TPokeData *LoadTPokeData(u16 heapId);
 void FreeTPokeData(TPokeData *data);
 u16 GetPokemonFieldOBJCODE(TPokeData *data, u16 species, u16 sex, u16 form);
 int GetFieldPokemonMMdlLUTIndex_(const TPokeData *data, u16 species, u16 sex, u16 form);
-bool IsFieldPokemonSpriteHugeBillboard(void *gameData, TPokeData *data, u16 species, u16 sex, u16 form);
 bool setupNpcFollower(void *gameData, u8 index, u8 isPersistent, u32 originActorId, u16 objCode, u16 scrId,
                       u16 trainerId);
 void TryRespawnFollowActor(void *gameData, u32 behind);
@@ -140,8 +139,7 @@ static u16 leadObjCode(void *gameData) {
     u16 form = PML_PkmGetParam(pkm, PKM_PARAM_FORM, 0);
     TPokeData *data = LoadTPokeData(HEAPID_FIELDMAP_TAIL);
     u16 code = 0;
-    if (GetFieldPokemonMMdlLUTIndex_(data, species, sex, form) != TPOKE_INDEX_NONE &&
-        !IsFieldPokemonSpriteHugeBillboard(gameData, data, species, sex, form)) {
+    if (GetFieldPokemonMMdlLUTIndex_(data, species, sex, form) != TPOKE_INDEX_NONE) {
         code = GetPokemonFieldOBJCODE(data, species, sex, form);
         if (PokeParty_IsRare(pkm) && pokemonSlot(code) >= 0 &&
             *data->mmodelTable > OBJ_CODE_SHINY_INDEX + (u32)pokemonSlot(code)) {
