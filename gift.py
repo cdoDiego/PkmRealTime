@@ -96,8 +96,22 @@ def trainer_from_mon(plain: bytes) -> dict:
             "language": plain[0x17], "version": plain[0x5F], "gender": plain[0x84] >> 7}
 
 
+def ability_id(ability) -> int:
+    """Número de habilidad a partir del número o del nombre (en inglés, como en la ROM; sin distinguir mayúsculas)."""
+    names = DATA["abilities"]
+    if isinstance(ability, str) and not ability.strip().isdigit():
+        found = [i for i, n in enumerate(names) if n.lower() == ability.strip().lower()]
+        if not found:
+            raise ValueError(f"habilidad desconocida: {ability}")
+        return found[0]
+    n = int(ability)
+    if not 1 <= n < len(names) or n > 0xFF:
+        raise ValueError(f"habilidad fuera de rango (1-{min(len(names) - 1, 0xFF)}): {n}")
+    return n
+
+
 def create(species: int, level: int, trainer: dict, *, moves=None, item: int = 0, nature=None,
-           shiny: bool = False, gender=None, hidden_ability: bool = False, ivs=None,
+           shiny: bool = False, gender=None, hidden_ability: bool = False, ability=None, ivs=None,
            met_location: int = DISTANT_LAND, ball: int = POKE_BALL, today=None, rng=None) -> bytearray:
     """Devuelve el Pokémon DESCIFRADO (136 bytes, con checksum). trainer = dict de trainer_from_status()."""
     info = species_info(species)
@@ -131,7 +145,10 @@ def create(species: int, level: int, trainer: dict, *, moves=None, item: int = 0
     struct.pack_into("<I", p, 0x10, exp_for_level(species, level))
     p[0x14] = info["friendship"]
     a1, a2, ah = info["abilities"]
-    if hidden_ability and ah:
+    if ability is not None:                                     # cualquiera, aunque la especie no la tenga
+        p[0x15] = ability_id(ability)
+        p[0x42] = 0x01 if hidden_ability else 0x00
+    elif hidden_ability and ah:
         p[0x15], p[0x42] = ah, 0x01
     else:
         p[0x15] = a2 if (pid >> 16) & 1 and a2 else a1           # Gen 5: el bit 16 del PID elige la habilidad

@@ -44,6 +44,15 @@ assert (gift.create(81, 5, TRAINER, rng=rng)[0x40] >> 1) & 3 == 2               
 assert (gift.create(1, 5, TRAINER, gender="hembra", rng=rng)[0x40] >> 1) & 3 == 1
 p = gift.create(1, 5, TRAINER, hidden_ability=True, rng=rng)
 assert p[0x15] == gift.species_info(1)["abilities"][2] and p[0x42] & 1        # oculta (Clorofila en el original)
+p = gift.create(1, 5, TRAINER, ability=22, moves=[89], rng=rng)               # Intimidación y Terremoto en Bulbasaur
+assert p[0x15] == 22 and not p[0x42] & 1 and gift.summary(p)["moves"] == ["Earthquake"]
+assert gift.create(1, 5, TRAINER, ability=gift.DATA["abilities"][22].upper(), rng=rng)[0x15] == 22   # por nombre
+for bad in (0, 9999, "No existe"):
+    try:
+        gift.create(1, 5, TRAINER, ability=bad, rng=rng)
+        raise AssertionError(f"debería fallar: {bad}")
+    except ValueError:
+        pass
 if SAME_MOVES:
     assert p[0x15] == 34
 p = gift.create(1, 5, TRAINER, moves=[33, 76], item=234, nature=3, rng=rng)

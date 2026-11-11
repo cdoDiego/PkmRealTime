@@ -964,6 +964,17 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
   las estadísticas reales: Alarido y Pulso Umbrío de Yveltal contra Umbreon, Golpe Bajo de Umbreon (el aura también
   sube los del rival), Fuerza Lunar de Xerneas contra Blissey, y Alarido / Pulso Umbrío (crítico) contra un Zygarde
   con Rompeaura: todos los golpes dentro del rango esperado; los mensajes al entrar (Yveltal y Zygarde salvaje) se ven bien.
+  Segunda tanda (11-nov), validada en el juego igual: Pelaje Recio (Defensa x2 contra físicos; Acróbata 46 contra
+  Furfrou, esperado 45-54), Alas Vendaval (+1 de prioridad a los Volador; Talonflame atacó antes que un Furfrou con
+  Velocidad +6), Piel Feérica / Helada / Celeste (Normal pasa a Hada / Hielo / Volador y x1,3; Vozarrón de Pinsir 72 y
+  "muy eficaz" contra Machamp), Mandíbula Fuerte (mordiscos x1,5; Triturar 11 con Defensa +3, esperado 10-12),
+  Megadisparador (pulsos x1,5; Pulso Dragón 80, esperado 78-92), Garra Dura (contacto x1,3; Tajo Cruzado 74, esperado
+  67-79), Antibalas (bombas y bolas sin efecto; Esfera Aural contra Chesnaught), Baba (Velocidad -1 al que le golpea con
+  contacto) y Tenacidad (+2 Ataque Especial si un rival le baja algo; saltó con la Velocidad que bajó Baba). Las listas
+  de mordiscos, pulsos y bolas van por número de movimiento de esta ROM (Redux cambia algunos: 121 es Colmillo Psíquico).
+  Para probarlas: `give_pokemon` a la caja con `ability` y `moves` libres, y un `start_wild_battle` con `hidden_ability`.
+  Faltan: Velo Aroma, Velo Flor, Carrillo, Mutatipo, Prestidigitador, Dulce Velo, Cambio Táctico, Simbiosis, Amor Filial,
+  los climas primigenios; Hierba Pelaje no hace nada (no hay campos en Gen 5).
   Investigado (10-nov): pokerogue (AGPL, TypeScript) sirve para consultar mecánicas, no para copiar; sus 929
   animaciones son 2D al estilo RPG Maker (cuadros con posición, zoom y tono) y no pasan al sistema de la DS (guiones con
   partículas 3D, SPA). hg-engine (HeartGold) tiene habilidades y movimientos hasta Gen 9, pero es otro motor. El hack de
@@ -1176,6 +1187,7 @@ Eventos disponibles:
 {"type": "battle_set_item", "target": {"side": "enemy", "slot": 0}, "item": 234}                  // 0 = quitar
 {"type": "give_pokemon", "species": 495, "level": 10, "shiny": true, "gender": "hembra",
  "item": 234, "moves": [33, 43, 22], "nature": 3, "hidden_ability": false}
+{"type": "give_pokemon", "species": 1, "level": 50, "ability": "Intimidate", "moves": [89]}   // para pruebas
 ```
 - `heal`: HP al máximo, sin estado y PP al máximo (respetando los Más PP).
 - `set_item`: objetos 0–638 (Gen 5). Ej.: 17 Poción, 155 Baya Aranja, 234 Restos.
@@ -1183,7 +1195,10 @@ Eventos disponibles:
   dejar un hueco vacío antes de uno lleno, ni quedarse sin movimientos. Los PP base salen de la ROM (`gen5_data.json`).
 - `give_item` / `take_item`: el puente elige el bolsillo según el objeto. Respeta los máximos (999, o 1 en MT).
   Los objetos clave y los no distribuidos en B2/W2 se rechazan. Al quitar, los de detrás suben un puesto.
-- `give_pokemon`: crea un Pokémon nuevo en el primer hueco libre de la caja 1 (si está llena, falla).
+- `give_pokemon`: crea un Pokémon nuevo en el primer hueco libre de la caja 1 (si está llena, falla). Los `moves` pueden ser
+  cualquiera, aunque la especie no los aprenda, y `ability` (número o nombre en inglés) pone cualquier habilidad, aunque la
+  especie no la tenga (con `hidden_ability` se marca además como oculta). Sirve para probar habilidades en combate. Solo a la caja:
+  al equipo (`destination: party`) lo crea el juego y no se pueden elegir movimientos, naturaleza ni habilidad.
 - `move_pokemon` / `remove_pokemon` (`pc.py`): escriben en la copia del save en RAM con guardas (si algo cambió, no se escribe
   nada), solo en el mapa con los menús cerrados. Del equipo a una caja se copian los 136 primeros bytes cifrados (ya son un
   Pokémon de caja válido); de una caja al equipo se calculan nivel, estadísticas y vida como el juego (comprobado con los 6 del

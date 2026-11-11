@@ -49,3 +49,12 @@
   - Name: BattleHandler_PopWork
     Segment: 0x1D
     Address: 0x21AC449
+  - Name: BattleEventVar_RewriteValue
+    Segment: 0x1D
+    Address: 0x21BCF11
+  - Name: IsAllyMonID
+    Segment: 0x1D
+    Address: 0x219D341
+  - Name: IsFainted
+    Segment: 0x1D
+    Address: 0x21BB3A9

@@ -83,6 +83,7 @@ class EventIn(BaseModel):
     gender: Optional[str] = None     # "macho" / "hembra"
     nature: Optional[int] = None     # 0-24
     hidden_ability: bool = False
+    ability: Optional[int | str] = None  # give_pokemon a la caja: habilidad (número o nombre), aunque la especie no la tenga
     stat: Optional[str] = None       # battle_set_stage: atk, def, spa, spd, spe, acc, eva
     stage: Optional[int] = None      # battle_set_stage: valor final -6..+6
     delta: Optional[int] = None      # battle_set_stage: cuánto subir (+) o bajar (-)
@@ -335,8 +336,9 @@ def build_commands(ev: Event) -> str:
         return season_command(str(need(d, "season")))
     if d["type"] == "give_pokemon" and d.get("destination") == "party":   # con la orden del juego (guion propio)
         require_compat("script")
-        if d["moves"] or d["nature"] is not None:
-            raise ValueError("al equipo no se pueden elegir movimientos ni naturaleza (los decide el juego); usa destination box1")
+        if d["moves"] or d["nature"] is not None or d.get("ability") is not None:
+            raise ValueError("al equipo no se pueden elegir movimientos, naturaleza ni habilidad (los decide el juego); "
+                             "usa destination box1")
         return "SAVE;S " + field_script.give_pokemon(int(need(d, "species")), int(d["level"] or 5), int(d.get("form") or 0),
                                                      d["hidden_ability"], d["gender"], int(d["item"] or 0),
                                                      int(d.get("ball") or 4), d["shiny"])
@@ -436,7 +438,7 @@ def gift_commands(d: dict) -> str:
         raise ValueError("la caja 1 está llena")
     mon = gift.create(int(need(d, "species")), int(d["level"] or 5), gift.trainer_from_status(trainer_raw),
                       moves=d["moves"], item=int(d["item"] or 0), nature=d["nature"], shiny=d["shiny"],
-                      gender=d["gender"], hidden_ability=d["hidden_ability"])
+                      gender=d["gender"], hidden_ability=d["hidden_ability"], ability=d.get("ability"))
     old = box_raw[slot * size:(slot + 1) * size]
     addr = game["party_addr"] - config.PARTY_PTR_OFF + config.BOX_PTR_OFF + slot * size
     return f"SAVE;G {addr:#x} {old.hex()} {bytes(pk5.encrypt(mon)).hex()}"
