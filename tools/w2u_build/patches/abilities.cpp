@@ -9,7 +9,9 @@
 // dark aura!", tools/battle_text.py); y, copiando a una parecida del juego (ability_handlers.c de la decomp):
 // Pelaje Recio (Escama Especial), Mandíbula Fuerte / Megadisparador / Garra Dura (Puño Férreo), Alas Vendaval
 // (Bromista), Piel Helada / Piel Feérica / Piel Celeste (Normalidad), Tenacidad (Competitivo), Baba (Piel Tosca) y
-// Antibalas (Insonorizar). Las listas de movimientos son por nombre en esta ROM: Redux cambia algunos (121 es
+// Antibalas (Insonorizar); Velo Aroma / Dulce Velo (Despiste / Insomnio, también a los aliados), Velo Flor (Cuerpo
+// Puro, a los aliados de tipo Planta), Carrillo (al comer una baya), Mutatipo (Cambio Color, antes de atacar) y
+// Prestidigitador (Ladrón). Las listas de movimientos son por nombre en esta ROM: Redux cambia algunos (121 es
 // Psicocolmillo, no Bomba Huevo).
 // Direcciones de W2 USA (decomp pokebw2, config/w2_us), las mismas en White2Upgrade; los nombres los añade
 // patches/battle.esdb.yml.
@@ -19,6 +21,12 @@
 #define ABILITY_DARK_AURA 186
 #define ABILITY_FAIRY_AURA 187
 #define ABILITY_AURA_BREAK 188
+#define ABILITY_AROMA_VEIL 165
+#define ABILITY_FLOWER_VEIL 166
+#define ABILITY_CHEEK_POUCH 167
+#define ABILITY_PROTEAN 168
+#define ABILITY_MAGICIAN 170
+#define ABILITY_SWEET_VEIL 175
 #define ABILITY_FUR_COAT 169
 #define ABILITY_BULLETPROOF 171
 #define ABILITY_COMPETITIVE 172
@@ -33,6 +41,35 @@
 #define TYPE_NORMAL 0
 #define TYPE_FLYING 2
 #define TYPE_ICE 14
+#define TYPE_GRASS 11
+#define MOVE_STRUGGLE 165
+#define CONDITION_SLEEP 2
+#define CONDITION_ATTRACT 7
+#define CONDITION_TAUNT 11
+#define CONDITION_TORMENT 12
+#define CONDITION_DISABLE 13
+#define CONDITION_YAWN 14
+#define CONDITION_HEAL_BLOCK 15
+#define CONDITION_ENCORE 23
+#define BTL_EVENT_CHECK_SLEEP_PREVENTED 0x0E   // Bostezo
+#define BTL_EVENT_MOVE_EXECUTE_START 0x24      // al empezar a usar un movimiento
+#define BTL_EVENT_CHECK_STAT_CHANGE 0x5B
+#define BTL_EVENT_STAT_CHANGE_FAILED 0x5C
+#define BTL_EVENT_MOVE_CONDITION_CHECK_FAIL 0x65   // antes de poner un estado (sueño, Mofa...)
+#define BTL_EVENT_ADD_CONDITION_FAILED 0x67
+#define BTL_EVENT_USE_ITEM 0x72                // al usar el objeto que lleva
+#define BTL_EVENT_DAMAGE_PROCESS_END_HIT 0x87  // tras el golpe, con los que perdieron PS (Hurto)
+#define BTL_EVAR_TARGET_COUNT 0x05
+#define BTL_EVAR_TARGET_1 0x06
+#define BTL_EVAR_STAT_CHANGE_SERIAL 0x19
+#define BTL_EVAR_CONDITION 0x1D
+#define BTL_EVAR_FAIL_FLAG 0x41
+#define BTL_HANDLER_RECOVER_HP 5
+#define BTL_HANDLER_CHANGE_TYPE 20
+#define BTL_HANDLER_SWAP_ITEM 36
+#define MSG_STATS_NOT_LOWERED 0xC6       // "X's stats were not lowered!"
+#define MSG_HP_RESTORED 0x183            // "X's HP was restored."
+#define MSG_STOLE_ITEM 0x421             // "X stole Y's Z!" (Ladrón)
 #define CATEGORY_PHYSICAL 1
 #define MOVE_FLAG_CONTACT 0
 #define STAT_ATTACK_SP 3
@@ -105,6 +142,33 @@ struct StatChangeParam {
     u8 monIds[8];
 };
 #define PARAM_POPUP (1u << 23)
+struct BattleHandlerStringData {         // BattleHandlerString
+    u16 message;
+    u16 flags;
+    u32 args[8];
+    u32 soundEffect;
+};
+struct RecoverHPParam {                   // BattleHandlerRecoverHPParam
+    u32 flags;                            // bit 23: con la ventana de la habilidad
+    u16 amount;
+    u8 targetIndex;
+    u8 skipCheck;
+    BattleHandlerStringData string;
+};
+struct ChangeTypeParam {                  // BattleHandlerChangeTypeParam (el juego pone "X transformed into the Y type!")
+    u32 flags;
+    u16 type;
+    u8 monIndex;
+    u8 suppressMessage;
+};
+struct SwapItemParam {                    // BattleHandlerSwapItemParam
+    u32 flags;
+    u8 otherIndex;
+    u8 pad[3];
+    BattleHandlerStringData firstString;
+    BattleHandlerStringData secondString;
+    BattleHandlerStringData thirdString;
+};
 struct AbilityEventAddEntry {
     u16 ability;
     AbilityEventAddFn eventAdd;
@@ -133,6 +197,13 @@ bool IsAllyMonID(u8 a, u8 b);
 bool IsFainted(BattleMon *mon);
 bool getMoveFlag(u16 move, u32 flag);
 u8 PML_MoveGetType(u16 move);
+bool PML_ItemIsBerry(u16 item);
+u16 GetBattleMonHeldItem(BattleMon *mon);
+bool IsItemSwapBlocked(BtlServerFlow *flow, u8 monId, u8 otherId);
+bool DoesMonHaveType(BattleMon *mon, u8 type);
+u16 GetPokeType(BattleMon *mon);
+u16 PokeTypePair_MakeMonotype(u8 type);
+u32 DivideMaxHPZeroCheck(BattleMon *mon, u32 divisor);
 s32 PML_MoveGetCategory(u16 move);
 }
 
@@ -319,6 +390,134 @@ static void noEffectBulletproof(BattleEventItem *, BtlServerFlow *flow, u8 monId
     }
 }
 
+// La ventana de la habilidad de monId y un mensaje sobre otro (el aliado al que protege)
+static void popupMessage(BtlServerFlow *flow, u8 monId, u16 message, u8 about) {
+    BattleHandler_PushRun(flow, BTL_HANDLER_ABILITY_POPUP_ADD, monId);
+    BattleHandlerMessageParam *param =
+        (BattleHandlerMessageParam *)BattleHandler_PushWork(flow, BTL_HANDLER_MESSAGE, monId);
+    BattleHandlerString *string = (BattleHandlerString *)param->string;
+    BattleHandler_StrSetup(string, BTL_STRTYPE_SET, message);
+    BattleHandler_AddArg(string, about);
+    BattleHandler_PopWork(flow, param);
+    BattleHandler_PushRun(flow, BTL_HANDLER_ABILITY_POPUP_REMOVE, monId);
+}
+
+// --- Velos: Dulce Velo (sin sueño ni Bostezo) y Velo Aroma (sin Atracción, Mofa, Tormento, Anulación, Anticura ni
+// Otra Vez), para él y sus aliados. Como Insomnio / Despiste, pero mirando el bando
+static const u8 sAromaVeilConditions[] = {CONDITION_ATTRACT, CONDITION_TAUNT, CONDITION_TORMENT,
+                                          CONDITION_DISABLE, CONDITION_HEAL_BLOCK, CONDITION_ENCORE};
+static const u8 sSweetVeilConditions[] = {CONDITION_SLEEP, CONDITION_YAWN};
+// La ventana sale aquí mismo y no en ADD_CONDITION_FAILED: Mofa, Bostezo, Otra Vez... ponen el estado sin pedir que
+// se avise si falla, y ese evento no llega
+static void veilCheck(BtlServerFlow *flow, u8 monId, const u8 *conditions, u32 count) {
+    u8 defender = BattleEventVar_GetValue(BTL_EVAR_DEFENDER);
+    if (!IsAllyMonID(monId, defender)) {
+        return;
+    }
+    u32 condition = BattleEventVar_GetValue(BTL_EVAR_CONDITION);
+    for (u32 i = 0; i < count; i++) {
+        if (conditions[i] == condition) {
+            if (BattleEventVar_RewriteValue(BTL_EVAR_FAIL_FLAG, 1)) {
+                popupMessage(flow, monId, MSG_NO_EFFECT, defender);
+            }
+            return;
+        }
+    }
+}
+static void checkAromaVeil(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *) {
+    veilCheck(flow, monId, sAromaVeilConditions, sizeof(sAromaVeilConditions));
+}
+static void checkSweetVeil(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *) {
+    veilCheck(flow, monId, sSweetVeilConditions, sizeof(sSweetVeilConditions));
+}
+static void yawnSweetVeil(BattleEventItem *, BtlServerFlow *, u8 monId, s32 *) {
+    if (IsAllyMonID(monId, BattleEventVar_GetValue(BTL_EVAR_MON))) {
+        BattleEventVar_RewriteValue(BTL_EVAR_FAIL_FLAG, 1);
+    }
+}
+
+// --- Velo Flor: a los de tipo Planta de su bando no les bajan las características otros (como Cuerpo Puro)
+static void checkFlowerVeil(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *work) {
+    u8 target = BattleEventVar_GetValue(BTL_EVAR_MON);
+    if (IsAllyMonID(monId, target) && BattleEventVar_GetValue(BTL_EVAR_ATTACKER) != target &&
+        (s32)BattleEventVar_GetValue(BTL_EVAR_AMOUNT) < 0 && DoesMonHaveType(GetBattleMon(flow, target), TYPE_GRASS)) {
+        work[0] = BattleEventVar_RewriteValue(BTL_EVAR_FAIL_FLAG, 1);
+    }
+}
+static void failedFlowerVeil(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *work) {
+    u8 target = BattleEventVar_GetValue(BTL_EVAR_MON);
+    if (IsAllyMonID(monId, target) && work[0]) {
+        u32 serial = BattleEventVar_GetValue(BTL_EVAR_STAT_CHANGE_SERIAL);
+        if (serial == 0 || (u32)work[1] != serial) {      // un mensaje por movimiento, aunque baje varias
+            popupMessage(flow, monId, MSG_STATS_NOT_LOWERED, target);
+            work[1] = serial;
+        }
+        work[0] = 0;
+    }
+}
+
+// --- Carrillo: al comerse una baya, además recupera 1/3 de sus PS
+static void itemCheekPouch(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *) {
+    if (BattleEventVar_GetValue(BTL_EVAR_MON) != monId) {
+        return;
+    }
+    BattleMon *mon = GetBattleMon(flow, monId);
+    if (PML_ItemIsBerry(GetBattleMonHeldItem(mon))) {
+        RecoverHPParam *param = (RecoverHPParam *)BattleHandler_PushWork(flow, BTL_HANDLER_RECOVER_HP, monId);
+        param->flags |= PARAM_POPUP;
+        param->amount = DivideMaxHPZeroCheck(mon, 3);
+        param->targetIndex = monId;
+        BattleHandler_StrSetup((BattleHandlerString *)&param->string, BTL_STRTYPE_SET, MSG_HP_RESTORED);
+        BattleHandler_AddArg((BattleHandlerString *)&param->string, monId);
+        BattleHandler_PopWork(flow, param);
+    }
+}
+
+// --- Mutatipo: antes de atacar pasa a ser del tipo del movimiento (como Cambio Color). Toma el tipo del movimiento,
+// no el calculado (Poder Oculto, Meteorobola)
+static void executeProtean(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *) {
+    if (BattleEventVar_GetValue(BTL_EVAR_MON) != monId) {
+        return;
+    }
+    u16 move = BattleEventVar_GetValue(BTL_EVAR_MOVE);
+    BattleMon *mon = GetBattleMon(flow, monId);
+    u8 type = PML_MoveGetType(move);
+    if (move == MOVE_STRUGGLE || IsFainted(mon) || GetPokeType(mon) == PokeTypePair_MakeMonotype(type)) {
+        return;
+    }
+    BattleHandler_PushRun(flow, BTL_HANDLER_ABILITY_POPUP_ADD, monId);
+    ChangeTypeParam *param = (ChangeTypeParam *)BattleHandler_PushWork(flow, BTL_HANDLER_CHANGE_TYPE, monId);
+    param->type = PokeTypePair_MakeMonotype(type);
+    param->monIndex = monId;
+    BattleHandler_PopWork(flow, param);
+    BattleHandler_PushRun(flow, BTL_HANDLER_ABILITY_POPUP_REMOVE, monId);
+}
+
+// --- Prestidigitador: si no lleva objeto, al golpear le quita el suyo al primero que perdió PS (como Ladrón)
+static void hitMagician(BattleEventItem *, BtlServerFlow *flow, u8 monId, s32 *) {
+    if (BattleEventVar_GetValue(BTL_EVAR_ATTACKER) != monId ||
+        GetBattleMonHeldItem(GetBattleMon(flow, monId)) != 0) {
+        return;
+    }
+    u32 count = BattleEventVar_GetValue(BTL_EVAR_TARGET_COUNT);
+    for (u32 i = 0; i < count; i++) {
+        u8 targetId = BattleEventVar_GetValue(BTL_EVAR_TARGET_1 + i);
+        u16 item = GetBattleMonHeldItem(GetBattleMon(flow, targetId));
+        if (item != 0 && !IsItemSwapBlocked(flow, monId, targetId)) {
+            SwapItemParam *param = (SwapItemParam *)BattleHandler_PushWork(flow, BTL_HANDLER_SWAP_ITEM, monId);
+            param->flags |= PARAM_POPUP;
+            param->otherIndex = targetId;
+            BattleHandlerString *string = (BattleHandlerString *)&param->firstString;
+            BattleHandler_StrSetup(string, BTL_STRTYPE_SET, MSG_STOLE_ITEM);
+            BattleHandler_AddArg(string, monId);
+            BattleHandler_AddArg(string, targetId);
+            BattleHandler_AddArg(string, item);
+            BattleHandler_PopWork(flow, param);
+            return;
+        }
+    }
+}
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 static const BattleEventHandlerEntry sHandlersDarkAura[] = {
     {BTL_EVENT_MEMBER_IN, inDarkAura},
@@ -366,6 +565,13 @@ HANDLERS(ToughClaws, {BTL_EVENT_MOVE_POWER, powerToughClaws})
 HANDLERS(Pixilate, {BTL_EVENT_GET_MOVE_PARAM, typePixilate}, {BTL_EVENT_MOVE_POWER, powerPixilate})
 HANDLERS(Gooey, {BTL_EVENT_DAMAGE_REACTION, reactionGooey})
 HANDLERS(Aerilate, {BTL_EVENT_GET_MOVE_PARAM, typeAerilate}, {BTL_EVENT_MOVE_POWER, powerAerilate})
+HANDLERS(AromaVeil, {BTL_EVENT_MOVE_CONDITION_CHECK_FAIL, checkAromaVeil})
+HANDLERS(SweetVeil, {BTL_EVENT_MOVE_CONDITION_CHECK_FAIL, checkSweetVeil},
+         {BTL_EVENT_CHECK_SLEEP_PREVENTED, yawnSweetVeil})
+HANDLERS(FlowerVeil, {BTL_EVENT_CHECK_STAT_CHANGE, checkFlowerVeil}, {BTL_EVENT_STAT_CHANGE_FAILED, failedFlowerVeil})
+HANDLERS(CheekPouch, {BTL_EVENT_USE_ITEM, itemCheekPouch})
+HANDLERS(Protean, {BTL_EVENT_MOVE_EXECUTE_START, executeProtean})
+HANDLERS(Magician, {BTL_EVENT_DAMAGE_PROCESS_END_HIT, hitMagician})
 
 static const AbilityEventAddEntry sNewAbilities[] = {
     {ABILITY_FUR_COAT, eventAddFurCoat},
@@ -379,6 +585,12 @@ static const AbilityEventAddEntry sNewAbilities[] = {
     {ABILITY_PIXILATE, eventAddPixilate},
     {ABILITY_GOOEY, eventAddGooey},
     {ABILITY_AERILATE, eventAddAerilate},
+    {ABILITY_AROMA_VEIL, eventAddAromaVeil},
+    {ABILITY_SWEET_VEIL, eventAddSweetVeil},
+    {ABILITY_FLOWER_VEIL, eventAddFlowerVeil},
+    {ABILITY_CHEEK_POUCH, eventAddCheekPouch},
+    {ABILITY_PROTEAN, eventAddProtean},
+    {ABILITY_MAGICIAN, eventAddMagician},
     {ABILITY_DARK_AURA, eventAddDarkAura},
     {ABILITY_FAIRY_AURA, eventAddFairyAura},
     {ABILITY_AURA_BREAK, eventAddAuraBreak},

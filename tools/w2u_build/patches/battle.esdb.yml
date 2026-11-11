@@ -58,3 +58,21 @@
   - Name: IsFainted
     Segment: 0x1D
     Address: 0x21BB3A9
+  - Name: GetBattleMonHeldItem
+    Segment: 0x1D
+    Address: 0x21BB381
+  - Name: IsItemSwapBlocked
+    Segment: 0x1D
+    Address: 0x21CDF69
+  - Name: DoesMonHaveType
+    Segment: 0x1D
+    Address: 0x21BB055
+  - Name: GetPokeType
+    Segment: 0x1D
+    Address: 0x21BB03D
+  - Name: PokeTypePair_MakeMonotype
+    Segment: 0x1D
+    Address: 0x21CE571
+  - Name: DivideMaxHPZeroCheck
+    Segment: 0x1D
+    Address: 0x21BD3C9

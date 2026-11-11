@@ -973,8 +973,16 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
   contacto) y Tenacidad (+2 Ataque Especial si un rival le baja algo; saltó con la Velocidad que bajó Baba). Las listas
   de mordiscos, pulsos y bolas van por número de movimiento de esta ROM (Redux cambia algunos: 121 es Colmillo Psíquico).
   Para probarlas: `give_pokemon` a la caja con `ability` y `moves` libres, y un `start_wild_battle` con `hidden_ability`.
-  Faltan: Velo Aroma, Velo Flor, Carrillo, Mutatipo, Prestidigitador, Dulce Velo, Cambio Táctico, Simbiosis, Amor Filial,
-  los climas primigenios; Hierba Pelaje no hace nada (no hay campos en Gen 5).
+  Tercera tanda (11-nov), validada en el juego: Mutatipo (antes de atacar pasa al tipo del movimiento, como Cambio
+  Color; Greninja quedó Planta tras Espora y Rayo Hielo hizo 78, el mínimo con STAB, sin él máx. 62), Dulce Velo (sin
+  sueño ni Bostezo para su bando; Espora contra Slurpuff), Velo Aroma (sin Atracción, Mofa, Tormento, Anulación,
+  Anticura ni Otra Vez para su bando; Mofa contra Aromatisse), Velo Flor (a los Planta de su bando no les bajan nada
+  otros; Intimidación de Masquerain contra Venusaur), Prestidigitador (si no lleva objeto, al golpear quita el del
+  rival, como Ladrón; Delphox robó los Restos) y Carrillo (al comer una baya, +1/3 de PS; sale antes que la curación
+  de la baya porque las habilidades van antes que los objetos). Ojo: Mofa, Bostezo, Otra Vez... ponen el estado sin
+  pedir aviso si falla (no llega `ADD_CONDITION_FAILED`), así que los velos muestran su ventana al bloquear, en
+  `MOVE_CONDITION_CHECK_FAIL`.
+  Faltan: Cambio Táctico, Simbiosis (solo dobles), Amor Filial, los climas primigenios; Hierba Pelaje no hace nada (no hay campos en Gen 5).
   Investigado (10-nov): pokerogue (AGPL, TypeScript) sirve para consultar mecánicas, no para copiar; sus 929
   animaciones son 2D al estilo RPG Maker (cuadros con posición, zoom y tono) y no pasan al sistema de la DS (guiones con
   partículas 3D, SPA). hg-engine (HeartGold) tiene habilidades y movimientos hasta Gen 9, pero es otro motor. El hack de
