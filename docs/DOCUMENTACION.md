@@ -953,6 +953,17 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
 **Límites de White2Upgrade:**
 - Las habilidades de Gen 6 solo tienen el nombre.
 - Unos 19 movimientos de Gen 6 necesitan código que no tienen.
+- Animaciones de los movimientos nuevos (parche `tools/w2u_build/patches/move_anims.cpp`, 10-nov): `BtlvEffvm_Start`
+  (overlay 168) toma los números desde `0x231` (561) como efectos del combate (salir de la Poké Ball, cambios de
+  estadísticas...), del archivo de efectos (número - 561), y el 560 lee la copia de Destructor que White2Upgrade puso en
+  `a/0/6/5`. Los 62 movimientos nuevos (560-621) hacían el efecto que les tocara: Fuerza Lunar se veía rara y Ala
+  Mortífera (613, efecto 52) sacaba a Yveltal de la pantalla y colgaba el combate. El parche engancha la única llamada
+  que pide la animación de un movimiento (`BtlvScu` → `BtlvEffect_StartMove`, overlay 167, `0x21D3154`) y cambia el
+  número por el de un movimiento parecido del juego (Ala Mortífera: Aire Afilado; Fuerza Lunar: Esfera Aural;
+  Geocontrol: Danza Aleteo...; nunca uno de dos turnos, que esconden al atacante). `patches/btlv.esdb.yml` añade el
+  símbolo `BtlvEffect_StartMove`. Ampliar `a/0/6/5` no sirve: esos números nunca se leen de ahí. Validado en el juego
+  (10-nov): Ala Mortífera, Fuerza Lunar y Geocontrol. Con el efecto equivocado también parecía que Yveltal atacaba
+  después de un rival de nivel 5; con el parche, el orden es el normal.
 - Las especies nuevas no tienen grito.
 - Sus sprites de Gen 6 son fijos (piezas genéricas) y quedan algo elevados. `sprites_gen5.py lote --desde 650 --hasta 721`
   los sustituye por los de Showdown: 52 animados y 20 fijos (los que no tienen GIF), todos apoyados en el suelo.
