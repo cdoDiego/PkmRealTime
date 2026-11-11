@@ -1,0 +1,51 @@
+  - Name: BtlvEffect_StartMove
+    Segment: 0x1E
+    Address: 0x21DF4A1
+  - Name: AbilityEvent_AddItem
+    Segment: 0x1D
+    Address: 0x21BDCED
+  - Name: GetBattleMonStat
+    Segment: 0x1D
+    Address: 0x21BB1F5
+  - Name: GetMonID
+    Segment: 0x1D
+    Address: 0x21BAC81
+  - Name: BattleEvent_AddItem
+    Segment: 0x1D
+    Address: 0x21BC75D
+  - Name: BattleEventVar_MulValue
+    Segment: 0x1D
+    Address: 0x21BCF59
+  - Name: BattleEventVar_GetValue
+    Segment: 0x1D
+    Address: 0x21BCFB1
+  - Name: devideNumHandersAndPri
+    Segment: 0x1D
+    Address: 0x21BDD61
+  - Name: calcAbilHandlerSubPriority
+    Segment: 0x1D
+    Address: 0x21BDE19
+  - Name: GetBattleMon
+    Segment: 0x1D
+    Address: 0x21AB875
+  - Name: BtlServerFlow_GetMonIDAtPos
+    Segment: 0x1D
+    Address: 0x21AB8C5
+  - Name: BtlServerFlow_GetFrontPosCount
+    Segment: 0x1D
+    Address: 0x21ABD01
+  - Name: BattleHandler_StrSetup
+    Segment: 0x1D
+    Address: 0x21AC3B9
+  - Name: BattleHandler_AddArg
+    Segment: 0x1D
+    Address: 0x21AC3E1
+  - Name: BattleHandler_PushWork
+    Segment: 0x1D
+    Address: 0x21AC425
+  - Name: BattleHandler_PushRun
+    Segment: 0x1D
+    Address: 0x21AC435
+  - Name: BattleHandler_PopWork
+    Segment: 0x1D
+    Address: 0x21AC449

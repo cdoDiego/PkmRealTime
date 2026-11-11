@@ -622,6 +622,7 @@ velocidad 200 %. Medido con una consulta real (~25 KB):
 | `python tools/follower_models.py --rom Mezcla.nds` | Baja los modelos de Pokémon que caminan (-4) para que pisen su sombra; va al final de la cadena (ver "Pokémon que te sigue") |
 | `python tools/follower_new.py --rom Mezcla.nds [--hojas carpeta]` | Crea modelos para caminar de las especies que no tienen (códigos `0x1300`+) con las hojas de PokeAvatars; va antes de `follower_models.py` (ver "Pokémon que te sigue") |
 | `python tools/follower_shiny.py --rom Mezcla.nds [--hojas carpeta]` | Añade una copia variocolor de cada modelo de Pokémon que camina (códigos `0x3000`+); va después de `follower_models.py` (ver "Pokémon que te sigue") |
+| `python tools/battle_text.py --rom Mezcla.nds` | Añade los mensajes de combate de las habilidades de Gen 6 ("X is radiating a dark aura!") detrás de los 1159 del archivo de texto 18; va después de `merge_redux.py` (ver "Límites de White2Upgrade") |
 | `python tools/sprites_gen5.py descargar sylveon` | Baja a `sprites_showdown/` los sprites de Showdown de una especie (GIF animados y PNG fijos) |
 | `docker build -t w2u-build tools/w2u_build` y `docker run ... w2u-build` | Compila White2Upgrade (ver "White2Upgrade compilado") |
 | `python tools/sprites_gen5.py lote --rom White2Upgrade.nds --salida Gen6.nds --desde 650 --hasta 721` | Todas las especies del rango con su nombre de la ROM: baja de Showdown lo que falte y escribe la ROM una vez |
@@ -951,7 +952,24 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
 - Validado en el juego: Yveltal y Talonflame sin cortes al capturar y con ataques; Snivy y los salvajes de Gen 5, iguales.
 
 **Límites de White2Upgrade:**
-- Las habilidades de Gen 6 solo tienen el nombre.
+- Las habilidades de Gen 6 solo tienen el nombre. Parche `tools/w2u_build/patches/abilities.cpp` (10-nov, piloto): el combate registra el
+  código de cada habilidad con `AbilityEvent_AddItem` (overlay 167), que solo busca en su tabla de 158; se enganchan sus
+  7 llamadas y, si no la encuentra, se busca en `sNewAbilities`. Cada habilidad son funciones para eventos del combate
+  (`BTL_EVENT_MOVE_POWER`...), como en Pokémon Showdown (MIT, la referencia de mecánicas) y en `ability_handlers.c` de
+  la decomp. Hechas: Aura Oscura y Aura Feérica (x4/3 a los movimientos Siniestro / Hada de cualquiera en el campo) y
+  Rompeaura (las invierte, x3/4), con la ventana de la habilidad y su mensaje al entrar o al ganarla, como Presión
+  (textos nuevos en el archivo 18 desde la línea 1159, `tools/battle_text.py`; en inglés como la ROM). Ojo: `BtlServerFlow_GetFrontPosCount` da los de un
+  bando; las posiciones del campo son el doble.
+  Validado en el juego (11-nov) comparando el daño del registro del combate (`/battle/log`) con el calculado a partir de
+  las estadísticas reales: Alarido y Pulso Umbrío de Yveltal contra Umbreon, Golpe Bajo de Umbreon (el aura también
+  sube los del rival), Fuerza Lunar de Xerneas contra Blissey, y Alarido / Pulso Umbrío (crítico) contra un Zygarde
+  con Rompeaura: todos los golpes dentro del rango esperado; los mensajes al entrar (Yveltal y Zygarde salvaje) se ven bien.
+  Investigado (10-nov): pokerogue (AGPL, TypeScript) sirve para consultar mecánicas, no para copiar; sus 929
+  animaciones son 2D al estilo RPG Maker (cuadros con posición, zoom y tono) y no pasan al sistema de la DS (guiones con
+  partículas 3D, SPA). hg-engine (HeartGold) tiene habilidades y movimientos hasta Gen 9, pero es otro motor. El hack de
+  Teracristalización de Blanco 2 (CC0, solo parches xdelta) se compiló desde la decomp: mueve casi todos los overlays,
+  así que no se puede trasplantar; de él se toma el diseño (tipo Tera en el byte `0x86` del Pokémon, botón en el
+  combate con L, entrenadores que lo usan) para las megas.
 - Unos 19 movimientos de Gen 6 necesitan código que no tienen.
 - Animaciones de los movimientos nuevos (parche `tools/w2u_build/patches/move_anims.cpp`, 10-nov): `BtlvEffvm_Start`
   (overlay 168) toma los números desde `0x231` (561) como efectos del combate (salir de la Poké Ball, cambios de
@@ -960,7 +978,7 @@ La ROM tiene que ser W2 USA (`IRDO`, SHA-256 `3e50aec3…`). Con otro nombre de 
   Mortífera (613, efecto 52) sacaba a Yveltal de la pantalla y colgaba el combate. El parche engancha la única llamada
   que pide la animación de un movimiento (`BtlvScu` → `BtlvEffect_StartMove`, overlay 167, `0x21D3154`) y cambia el
   número por el de un movimiento parecido del juego (Ala Mortífera: Aire Afilado; Fuerza Lunar: Esfera Aural;
-  Geocontrol: Danza Aleteo...; nunca uno de dos turnos, que esconden al atacante). `patches/btlv.esdb.yml` añade el
+  Geocontrol: Danza Aleteo...; nunca uno de dos turnos, que esconden al atacante). `patches/battle.esdb.yml` añade el
   símbolo `BtlvEffect_StartMove`. Ampliar `a/0/6/5` no sirve: esos números nunca se leen de ahí. Validado en el juego
   (10-nov): Ala Mortífera, Fuerza Lunar y Geocontrol. Con el efecto equivocado también parecía que Yveltal atacaba
   después de un rival de nivel 5; con el parche, el orden es el normal.
